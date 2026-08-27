@@ -299,6 +299,65 @@ export function StoryApp({ onClose }: StoryAppProps) {
   const [selectedStoryMsgIds, setSelectedStoryMsgIds] = useState<Set<string>>(new Set());
   const [storyExportFilterQuery, setStoryExportFilterQuery] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  // 精准跳转并自动展开历史消息
+  const jumpToStoryMessage = useCallback((targetMsgId: string) => {
+    setDrawerOpen(false);
+    // 立即解除贴底锁定，并在 3.5 秒内抑制一切尺寸变动引起的自动滚到底部
+    autoBottomLockRef.current = false;
+    foldToggleSuppressUntilRef.current = performance.now() + 3500;
+
+    // 计算展开数量：直接确保目标消息已被包含在可见列表中
+    const targetIdx = messages.findIndex((m) => m.id === targetMsgId);
+    if (targetIdx !== -1) {
+      const neededCount = messages.length - targetIdx + 5;
+      setVisibleMessageCount((prev) => Math.max(prev, neededCount));
+    }
+
+    // 多阶重试滚动：确保在 DOM 扩充挂载、图片加载及动画结束后精准停在正中央
+    let attempts = 0;
+    const runScroll = () => {
+      attempts += 1;
+      const container = scrollRef.current;
+      const el = document.getElementById(`story-msg-${targetMsgId}`) || (document.querySelector(`[data-msg-id="${targetMsgId}"]`) as HTMLElement | null);
+      if (el && container) {
+        // 自动展开目标元素内部的折叠块
+        el.querySelectorAll("details").forEach((d) => { d.open = true; });
+
+        // 容器内精确计算绝对滚动距离
+        const containerRect = container.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        const relativeTop = elRect.top - containerRect.top + container.scrollTop;
+        const targetScrollTop = relativeTop - (container.clientHeight / 2) + (elRect.height / 2);
+
+        container.scrollTo({
+          top: Math.max(0, targetScrollTop),
+          behavior: attempts <= 1 ? "auto" : "smooth",
+        });
+
+        // 呼吸高亮框提示当前所在行
+        el.style.transition = "outline 0.3s ease, background 0.3s ease";
+        el.style.outline = "2px solid #0ea5e9";
+        el.style.outlineOffset = "4px";
+        el.style.borderRadius = "8px";
+        el.style.background = "rgba(14, 165, 233, 0.08)";
+
+        setTimeout(() => {
+          if (el) {
+            el.style.outline = "none";
+            el.style.background = "";
+          }
+        }, 2800);
+      }
+
+      if (attempts < 5) {
+        setTimeout(runScroll, attempts === 1 ? 80 : 200);
+      }
+    };
+
+    // 延迟 60ms 启动第一帧，等待 React 完成状态更新与侧栏收起
+    setTimeout(runScroll, 60);
+  }, [messages]);
   const shellInnerRef = useRef<HTMLDivElement | null>(null);
   const mountedRef = useRef(true);
   const activeSessionIdRef = useRef("");
@@ -1065,36 +1124,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
                       <button
                         key={m.id || sIdx}
                         type="button"
-                        onClick={() => {
-                          setDrawerOpen(false);
-                          // 计算目标消息在所有消息中的倒数位置，确保 visibleMessageCount 足够展开该消息
-                          const targetIdx = messages.findIndex(item => item.id === m.id);
-                          if (targetIdx !== -1) {
-                            const neededCount = messages.length - targetIdx;
-                            if (neededCount > visibleMessageCount) {
-                              setVisibleMessageCount(neededCount + 5);
-                            }
-                          }
-                          // 等待 DOM 渲染和抽屉关闭后精确定位
-                          setTimeout(() => {
-                            const el = document.getElementById(`story-msg-${m.id}`);
-                            if (el) {
-                              // 如果位于折叠标签内，自动展开父级 details
-                              const parentDetails = el.querySelectorAll("details");
-                              parentDetails.forEach(d => { d.open = true; });
-                              el.scrollIntoView({ behavior: "smooth", block: "center" });
-                              // 临时高亮边框提示用户
-                              el.style.transition = "box-shadow 0.3s ease, background 0.3s ease";
-                              const origBg = el.style.background;
-                              el.style.background = "rgba(14, 165, 233, 0.12)";
-                              el.style.boxShadow = "0 0 0 2px #0ea5e9";
-                              setTimeout(() => {
-                                el.style.background = origBg;
-                                el.style.boxShadow = "none";
-                              }, 2000);
-                            }
-                          }, 280);
-                        }}
+                        onClick={() => jumpToStoryMessage(m.id)}
                         style={{
                           textAlign: "left",
                           padding: "6px 8px",
