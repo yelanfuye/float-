@@ -32,7 +32,7 @@ import {
     pruneExpiredGroupMutes,
     type GroupAdminAction,
 } from "@/lib/group-admin";
-import { clearChatOfflineTurns } from "@/lib/chat-offline-storage";
+import { clearChatOfflineTurns, loadChatOfflineTurns, type ChatOfflineTurn } from "@/lib/chat-offline-storage";
 import { removeChatSessionCompletely } from "@/lib/chat-session-remove";
 import { triggerDeleteFriendReaction } from "@/lib/friend-request-engine";
 import { loadCharacters } from "@/lib/character-storage";
@@ -508,6 +508,20 @@ export function ChatSettingsPanel({
     };
 
     const [groupName, setGroupName] = useState(session.groupName || "");
+    const [showOfflineSearch, setShowOfflineSearch] = useState(false);
+    const [offlineSearchQuery, setOfflineSearchQuery] = useState("");
+    const [offlineTurnsList, setOfflineTurnsList] = useState<ChatOfflineTurn[]>([]);
+    const [offlineExportRangeOpen, setOfflineExportRangeOpen] = useState(false);
+    const [offlineRangeStart, setOfflineRangeStart] = useState(1);
+    const [offlineRangeEnd, setOfflineRangeEnd] = useState(1);
+
+    const openOfflineSearchPanel = () => {
+        const turns = loadChatOfflineTurns(session.id);
+        setOfflineTurnsList(turns);
+        setOfflineRangeStart(1);
+        setOfflineRangeEnd(turns.length || 1);
+        setShowOfflineSearch(true);
+    };
 
     const characters = loadCharacters();
     const character = characters.find(c => c.id === session.contactId);
@@ -1206,6 +1220,19 @@ export function ChatSettingsPanel({
                     </button>
                     <button
                         className="menu-item"
+                        onClick={openOfflineSearchPanel}
+                    >
+                        <ChatInfoIcon icon={Search} color={BINDING_ACCENTS.preset} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">查找线下剧情与剧本导出</span>
+                            <span className="menu-desc">检索线下主要剧情与对话，支持导出 TXT 剧本</span>
+                        </div>
+                        <div className="menu-right">
+                            <ChevronRight size={16} />
+                        </div>
+                    </button>
+                    <button
+                        className="menu-item"
                         disabled={offlineHistoryBusy}
                         onClick={() => {
                             if (!offlineHistoryBusy) setShowConfirmClearOffline(true);
@@ -1535,6 +1562,238 @@ export function ChatSettingsPanel({
                     characterName={characterName}
                     onClose={() => setShowComputer(false)}
                 />
+            )}
+
+            {/* Sub-page: Search Offline History & Export TXT */}
+            {showOfflineSearch && (
+                <div style={{ position: "absolute", inset: 0, zIndex: 9999, background: "#ffffff" }}>
+                <div style={{ position: "absolute", inset: 0, background: "var(--c-page-body-bg)" }}>
+                    <PageShell title="查找线下剧情与导出" onBack={() => setShowOfflineSearch(false)}>
+                        <div className="px-4 pt-2 pb-3 flex items-center gap-2">
+                            <input
+                                autoFocus
+                                type="text"
+                                placeholder="搜索线下主要剧情、对白或你的行动..."
+                                value={offlineSearchQuery}
+                                onChange={e => setOfflineSearchQuery(e.target.value)}
+                                className="ui-input flex-1 min-w-0"
+                            />
+                            {offlineSearchQuery && (
+                                <button
+                                    type="button"
+                                    onClick={() => setOfflineSearchQuery("")}
+                                    className="h-10 w-10 shrink-0 grid place-items-center border-0 bg-transparent text-[var(--c-icon)]"
+                                >
+                                    <X size={18} />
+                                </button>
+                            )}
+                        </div>
+
+                        {/* 导出工具栏 */}
+                        <div className="px-4 pb-3 flex gap-2">
+                            <button
+                                type="button"
+                                className="ui-btn ui-btn-primary flex-1 text-xs"
+                                onClick={() => {
+                                    if (offlineTurnsList.length === 0) {
+                                        alert("当前暂无线下剧情记录");
+                                        return;
+                                    }
+                                    const lines: string[] = [];
+                                    lines.push(`========================================`);
+                                    lines.push(` 线下模式 · 与「${characterName}」完整剧本`);
+                                    lines.push(` 导出时间：${new Date().toLocaleString("zh-CN")}`);
+                                    lines.push(` 共 ${offlineTurnsList.length} 个线下回合`);
+                                    lines.push(`========================================\n`);
+
+                                    offlineTurnsList.forEach((turn, idx) => {
+                                        const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${idx+1}`;
+                                        lines.push(`【第 ${idx + 1} 回合 · ${timeStr}】`);
+                                        if (turn.userContent) {
+                                            lines.push(`【你的行动与发言】:\n${turn.userContent}\n`);
+                                        }
+                                        if (turn.assistantContent) {
+                                            lines.push(`【${characterName}的主要剧情展开】:\n${turn.assistantContent}\n`);
+                                        }
+                                        if (turn.summary) {
+                                            lines.push(`[剧情梗概]: ${turn.summary}\n`);
+                                        }
+                                        lines.push(`----------------------------------------\n`);
+                                    });
+
+                                    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement("a");
+                                    a.href = url;
+                                    a.download = `线下剧本_${characterName}_全本_${new Date().toISOString().slice(0, 10)}.txt`;
+                                    document.body.appendChild(a);
+                                    a.click();
+                                    document.body.removeChild(a);
+                                    URL.revokeObjectURL(url);
+                                }}
+                            >
+                                📥 导出全部线下剧本 TXT
+                            </button>
+
+                            <button
+                                type="button"
+                                className="ui-btn ui-btn-outline flex-1 text-xs"
+                                onClick={() => setOfflineExportRangeOpen(true)}
+                            >
+                                📑 选段导出 TXT
+                            </button>
+                        </div>
+
+                        {/* 搜索与内容列表 */}
+                        <div className="flex flex-col gap-3 px-4 pb-6 overflow-y-auto flex-1">
+                            {offlineTurnsList.length === 0 ? (
+                                <div className="ui-empty py-10">
+                                    <span className="menu-desc">当前会话暂无线下剧情记录</span>
+                                </div>
+                            ) : null}
+
+                            {offlineTurnsList
+                                .filter(t => {
+                                    if (!offlineSearchQuery.trim()) return true;
+                                    const q = offlineSearchQuery.trim().toLowerCase();
+                                    return (t.userContent || "").toLowerCase().includes(q) ||
+                                           (t.assistantContent || "").toLowerCase().includes(q) ||
+                                           (t.summary || "").toLowerCase().includes(q);
+                                })
+                                .map((turn, tIdx) => {
+                                    const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${tIdx+1}`;
+                                    return (
+                                        <div
+                                            key={turn.id || tIdx}
+                                            className="p-3.5 rounded-xl border border-[var(--c-border-light,#e2e8f0)] bg-[var(--c-card-bg,#fff)] flex flex-col gap-2 shadow-sm"
+                                        >
+                                            <div className="flex items-center justify-between text-xs text-[var(--c-sub,#64748b)] pb-1.5 border-b border-[var(--c-line,#f1f5f9)]">
+                                                <span className="font-semibold text-[var(--c-text-title,#0f172a)]">
+                                                    第 {tIdx + 1} 回合 · {timeStr}
+                                                </span>
+                                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--c-input,#f8fafc)]">线下剧情</span>
+                                            </div>
+
+                                            {turn.userContent ? (
+                                                <div className="text-xs text-[var(--c-text,#334155)] leading-relaxed">
+                                                    <b className="text-[var(--c-accent,#2563eb)]">你的行动：</b> {turn.userContent}
+                                                </div>
+                                            ) : null}
+
+                                            {turn.assistantContent ? (
+                                                <div className="text-xs text-[var(--c-text,#1e293b)] leading-relaxed bg-[var(--c-input,#f8fafc)] p-2 rounded-lg">
+                                                    <b className="text-[var(--c-text-title,#0f172a)]">{characterName}的主要剧情：</b>
+                                                    <div className="mt-1 whitespace-pre-wrap">{turn.assistantContent}</div>
+                                                </div>
+                                            ) : null}
+
+                                            {turn.summary ? (
+                                                <div className="text-[11px] text-[var(--c-sub,#94a3b8)] italic">
+                                                    梗概：{turn.summary}
+                                                </div>
+                                            ) : null}
+                                        </div>
+                                    );
+                                })}
+                        </div>
+
+                        {/* 选段导出弹窗 */}
+                        {offlineExportRangeOpen && (
+                            <div className="modal-overlay" style={{ zIndex: 10050 }} onClick={() => setOfflineExportRangeOpen(false)}>
+                                <div className="modal-dialog" onClick={e => e.stopPropagation()}>
+                                    <div className="ts-17 font-semibold text-center text-[var(--c-text)]">
+                                        📑 选段导出线下剧本 TXT
+                                    </div>
+                                    <div className="text-xs text-[var(--c-sub)] text-center">
+                                        当前共有 <b>{offlineTurnsList.length}</b> 个线下回合。请选择范围：
+                                    </div>
+
+                                    <div className="flex items-center gap-3 w-full my-2">
+                                        <div className="flex-1 flex flex-col gap-1">
+                                            <span className="text-xs text-[var(--c-sub)]">起始回合:</span>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                max={offlineTurnsList.length || 1}
+                                                value={offlineRangeStart}
+                                                onChange={e => setOfflineRangeStart(Math.max(1, Math.min(offlineTurnsList.length || 1, parseInt(e.target.value) || 1)))}
+                                                className="ui-input text-center"
+                                            />
+                                        </div>
+                                        <span className="mt-4 text-xs text-[var(--c-sub)]">至</span>
+                                        <div className="flex-1 flex flex-col gap-1">
+                                            <span className="text-xs text-[var(--c-sub)]">结束回合:</span>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                max={offlineTurnsList.length || 1}
+                                                value={offlineRangeEnd > offlineTurnsList.length ? (offlineTurnsList.length || 1) : offlineRangeEnd}
+                                                onChange={e => setOfflineRangeEnd(Math.max(1, Math.min(offlineTurnsList.length || 1, parseInt(e.target.value) || 1)))}
+                                                className="ui-input text-center"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="flex gap-3 w-full mt-2">
+                                        <button
+                                            type="button"
+                                            className="ui-btn ui-btn-ghost flex-1"
+                                            onClick={() => setOfflineExportRangeOpen(false)}
+                                        >
+                                            取消
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="ui-btn ui-btn-primary flex-1"
+                                            onClick={() => {
+                                                if (offlineTurnsList.length === 0) return;
+                                                const startIdx = Math.max(0, Math.min(offlineRangeStart, offlineRangeEnd) - 1);
+                                                const endIdx = Math.min(offlineTurnsList.length, Math.max(offlineRangeStart, offlineRangeEnd));
+                                                const slice = offlineTurnsList.slice(startIdx, endIdx);
+
+                                                const lines: string[] = [];
+                                                lines.push(`========================================`);
+                                                lines.push(` 线下模式 · 与「${characterName}」选段剧本`);
+                                                lines.push(` 导出范围：第 ${startIdx + 1} 回合 至 第 ${endIdx} 回合 (共 ${slice.length} 回合)`);
+                                                lines.push(` 导出时间：${new Date().toLocaleString("zh-CN")}`);
+                                                lines.push(`========================================\n`);
+
+                                                slice.forEach((turn, idx) => {
+                                                    const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${startIdx + idx + 1}`;
+                                                    lines.push(`【第 ${startIdx + idx + 1} 回合 · ${timeStr}】`);
+                                                    if (turn.userContent) {
+                                                        lines.push(`【你的行动与发言】:\n${turn.userContent}\n`);
+                                                    }
+                                                    if (turn.assistantContent) {
+                                                        lines.push(`【${characterName}的主要剧情展开】:\n${turn.assistantContent}\n`);
+                                                    }
+                                                    if (turn.summary) {
+                                                        lines.push(`[剧情梗概]: ${turn.summary}\n`);
+                                                    }
+                                                    lines.push(`----------------------------------------\n`);
+                                                });
+
+                                                const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+                                                const url = URL.createObjectURL(blob);
+                                                const a = document.createElement("a");
+                                                a.href = url;
+                                                a.download = `线下剧本_${characterName}_第${startIdx + 1}-${endIdx}回合_${new Date().toISOString().slice(0, 10)}.txt`;
+                                                document.body.appendChild(a);
+                                                a.click();
+                                                document.body.removeChild(a);
+                                                URL.revokeObjectURL(url);
+                                                setOfflineExportRangeOpen(false);
+                                            }}
+                                        >
+                                            确认导出
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </PageShell>
+                </div>
+                </div>
             )}
 
             {/* Sub-page: Search History */}
