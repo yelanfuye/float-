@@ -294,6 +294,10 @@ export function StoryApp({ onClose }: StoryAppProps) {
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState("");
   const [cssModalOpen, setCssModalOpen] = useState(false);
+  const [storySearchQuery, setStorySearchQuery] = useState("");
+  const [exportRangeModalOpen, setExportRangeModalOpen] = useState(false);
+  const [exportRangeStart, setExportRangeStart] = useState(1);
+  const [exportRangeEnd, setExportRangeEnd] = useState(1);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const shellInnerRef = useRef<HTMLDivElement | null>(null);
   const mountedRef = useRef(true);
@@ -995,6 +999,163 @@ export function StoryApp({ onClose }: StoryAppProps) {
           </div>
         </div>
 
+        {/* ====== 剧情检索与剧本导出模块 ====== */}
+        <div className="story-drawer-section">
+          <div className="story-drawer-eyebrow">剧情检索与剧本导出</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+            <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+              <input
+                type="text"
+                value={storySearchQuery}
+                onChange={(e) => setStorySearchQuery(e.target.value)}
+                placeholder="搜索本剧情段落关键词…"
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  padding: "8px 28px 8px 10px",
+                  borderRadius: 6,
+                  border: "1px solid var(--c-story-drawer-border, rgba(124, 104, 68, 0.15))",
+                  background: "var(--c-story-css-box-bg, rgba(255, 251, 246, 0.88))",
+                  color: "var(--c-story-text, #4b4335)",
+                  fontSize: "calc(12px*var(--app-text-scale,1))",
+                  outline: "none",
+                }}
+              />
+              {storySearchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => setStorySearchQuery("")}
+                  style={{
+                    position: "absolute",
+                    right: 6,
+                    background: "none",
+                    border: "none",
+                    color: "var(--c-story-sub, #94a3b8)",
+                    cursor: "pointer",
+                    fontSize: 12,
+                    padding: "2px 4px",
+                  }}
+                >
+                  ✕
+                </button>
+              ) : null}
+            </div>
+
+            {storySearchQuery.trim() ? (
+              <div style={{
+                maxHeight: 180,
+                overflowY: "auto",
+                background: "var(--c-story-panel, rgba(255, 255, 255, 0.6))",
+                borderRadius: 6,
+                border: "1px solid var(--c-story-drawer-border, rgba(124, 104, 68, 0.15))",
+                padding: 4,
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+              }}>
+                {messages
+                  .filter((m) => {
+                    const txt = (m.renderedContent || m.rawContent || "").toLowerCase();
+                    return txt.includes(storySearchQuery.trim().toLowerCase());
+                  })
+                  .map((m, sIdx) => {
+                    const speaker = m.role === "user" ? (userIdentity?.name || "我") : currentCharacter.name;
+                    const preview = (m.renderedContent || m.rawContent || "").replace(/<[^>]+>/g, "").slice(0, 48);
+                    return (
+                      <button
+                        key={m.id || sIdx}
+                        type="button"
+                        onClick={() => {
+                          setDrawerOpen(false);
+                          setTimeout(() => {
+                            const el = document.querySelector(`[data-role="${m.role}"]`);
+                            if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+                          }, 300);
+                        }}
+                        style={{
+                          textAlign: "left",
+                          padding: "6px 8px",
+                          borderRadius: 4,
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 2,
+                          color: "var(--c-story-text, #3a3b3c)",
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(0,0,0,0.04)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+                      >
+                        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--c-story-heading, #1e293b)" }}>
+                          {speaker} · {formatStoryTime(m.createdAt)}
+                        </span>
+                        <span style={{ fontSize: 11, opacity: 0.8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {preview}…
+                        </span>
+                      </button>
+                    );
+                  })}
+                {messages.filter(m => (m.renderedContent || m.rawContent || "").toLowerCase().includes(storySearchQuery.trim().toLowerCase())).length === 0 ? (
+                  <div style={{ padding: "8px 6px", fontSize: 11, color: "var(--c-story-sub, #94a3b8)", textAlign: "center" }}>
+                    未匹配到关键词段落
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+              <button
+                type="button"
+                className="story-tool-btn"
+                style={{ flex: 1, margin: 0, padding: "7px 0", fontSize: "calc(12px*var(--app-text-scale,1))" }}
+                onClick={() => {
+                  if (messages.length === 0) {
+                    alert("当前没有可导出的剧情内容");
+                    return;
+                  }
+                  const lines: string[] = [];
+                  lines.push(`========================================`);
+                  lines.push(` 剧情模式 · 《${currentCharacter.name}》完整剧本`);
+                  lines.push(` 角色：${currentCharacter.name} x ${userIdentity?.name || "我"}`);
+                  lines.push(` 导出时间：${new Date().toLocaleString("zh-CN")}`);
+                  lines.push(` 共 ${messages.length} 幕/条段落`);
+                  lines.push(`========================================\n`);
+
+                  messages.forEach((m, idx) => {
+                    const speaker = m.role === "user" ? (userIdentity?.name || "我") : currentCharacter.name;
+                    const cleanTxt = (m.renderedContent || m.rawContent || "").replace(/<[^>]+>/g, "").trim();
+                    lines.push(`【第 ${idx + 1} 幕】 ${speaker} (${formatStoryTime(m.createdAt)}):`);
+                    lines.push(cleanTxt);
+                    lines.push(`\n----------------------------------------\n`);
+                  });
+
+                  const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `剧情剧本_${currentCharacter.name}_${new Date().toISOString().slice(0, 10)}.txt`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                📥 导出全本 TXT
+              </button>
+
+              <button
+                type="button"
+                className="story-tool-btn"
+                style={{ flex: 1, margin: 0, padding: "7px 0", fontSize: "calc(12px*var(--app-text-scale,1))" }}
+                onClick={() => setExportRangeModalOpen(true)}
+              >
+                📑 选段导出 TXT
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div className="story-drawer-section">
           <div className="story-drawer-eyebrow">工具</div>
           <button
@@ -1216,6 +1377,154 @@ export function StoryApp({ onClose }: StoryAppProps) {
         onSend={(text) => { void handleSend(text); }}
         onStop={handleStopGeneration}
       />
+
+      {/* ====== 选段导出 TXT 模态框 ====== */}
+      {exportRangeModalOpen && (
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 320,
+          background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)",
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+        }}>
+          <div style={{
+            background: "var(--c-story-bg-top, #fdfdfd)",
+            borderRadius: 16,
+            width: "100%",
+            maxWidth: 340,
+            padding: "20px 18px",
+            boxShadow: "0 12px 32px rgba(0,0,0,0.25)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 14,
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 15, fontWeight: 700, color: "var(--c-story-heading, #1e293b)" }}>
+                📑 选段导出 TXT 剧本
+              </span>
+              <button onClick={() => setExportRangeModalOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-story-sub, #94a3b8)" }}>
+                ✕
+              </button>
+            </div>
+
+            <div style={{ fontSize: 12, color: "var(--c-story-sub, #64748b)", lineHeight: 1.5 }}>
+              当前共有 <b>{messages.length}</b> 幕/段剧情。请选择要导出的起始幕与结束幕范围：
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, color: "var(--c-story-sub, #94a3b8)" }}>起始幕:</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={messages.length || 1}
+                  value={exportRangeStart}
+                  onChange={(e) => setExportRangeStart(Math.max(1, Math.min(messages.length || 1, parseInt(e.target.value) || 1)))}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 6,
+                    border: "1px solid var(--c-story-drawer-border, rgba(0,0,0,0.12))",
+                    background: "var(--c-story-css-box-bg, #f8fafc)",
+                    fontSize: 13,
+                    fontWeight: 600,
+                  }}
+                />
+              </div>
+
+              <span style={{ marginTop: 16, color: "var(--c-story-sub, #94a3b8)" }}>至</span>
+
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, color: "var(--c-story-sub, #94a3b8)" }}>结束幕:</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={messages.length || 1}
+                  value={exportRangeEnd > messages.length ? (messages.length || 1) : exportRangeEnd}
+                  onChange={(e) => setExportRangeEnd(Math.max(1, Math.min(messages.length || 1, parseInt(e.target.value) || 1)))}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 6,
+                    border: "1px solid var(--c-story-drawer-border, rgba(0,0,0,0.12))",
+                    background: "var(--c-story-css-box-bg, #f8fafc)",
+                    fontSize: 13,
+                    fontWeight: 600,
+                  }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              <button
+                type="button"
+                onClick={() => setExportRangeModalOpen(false)}
+                style={{
+                  flex: 1,
+                  padding: "10px 0",
+                  borderRadius: 8,
+                  border: "1px solid var(--c-story-drawer-border, rgba(0,0,0,0.1))",
+                  background: "var(--c-story-panel, rgba(0,0,0,0.03))",
+                  color: "var(--c-story-text, #475569)",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (messages.length === 0) {
+                    alert("当前没有可导出的剧情");
+                    return;
+                  }
+                  const startIdx = Math.max(0, Math.min(exportRangeStart, exportRangeEnd) - 1);
+                  const endIdx = Math.min(messages.length, Math.max(exportRangeStart, exportRangeEnd));
+                  const slice = messages.slice(startIdx, endIdx);
+
+                  const lines: string[] = [];
+                  lines.push(`========================================`);
+                  lines.push(` 剧情模式 · 《${currentCharacter.name}》选段剧本`);
+                  lines.push(` 角色：${currentCharacter.name} x ${userIdentity?.name || "我"}`);
+                  lines.push(` 导出范围：第 ${startIdx + 1} 幕 至 第 ${endIdx} 幕 (共 ${slice.length} 幕)`);
+                  lines.push(` 导出时间：${new Date().toLocaleString("zh-CN")}`);
+                  lines.push(`========================================\n`);
+
+                  slice.forEach((m, idx) => {
+                    const speaker = m.role === "user" ? (userIdentity?.name || "我") : currentCharacter.name;
+                    const cleanTxt = (m.renderedContent || m.rawContent || "").replace(/<[^>]+>/g, "").trim();
+                    lines.push(`【第 ${startIdx + idx + 1} 幕】 ${speaker} (${formatStoryTime(m.createdAt)}):`);
+                    lines.push(cleanTxt);
+                    lines.push(`\n----------------------------------------\n`);
+                  });
+
+                  const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `剧情剧本_${currentCharacter.name}_第${startIdx + 1}-${endIdx}幕_${new Date().toISOString().slice(0, 10)}.txt`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                  setExportRangeModalOpen(false);
+                }}
+                style={{
+                  flex: 1.4,
+                  padding: "10px 0",
+                  borderRadius: 8,
+                  border: "none",
+                  background: "linear-gradient(135deg, #0ea5e9, #2563eb)",
+                  color: "#fff",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                确认导出
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CSS Style Modal */}
       {cssModalOpen && (
