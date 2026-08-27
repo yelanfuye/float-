@@ -1113,16 +1113,17 @@ export function StoryApp({ onClose }: StoryAppProps) {
                 gap: 4,
               }}>
                 {messages
-                  .filter((m) => {
+                  .map((m, origIdx) => ({ m, origIdx }))
+                  .filter(({ m }) => {
                     const txt = (m.renderedContent || m.rawContent || "").toLowerCase();
                     return txt.includes(storySearchQuery.trim().toLowerCase());
                   })
-                  .map((m, sIdx) => {
+                  .map(({ m, origIdx }) => {
                     const speaker = m.role === "user" ? (userIdentity?.name || "我") : currentCharacter.name;
                     const preview = (m.renderedContent || m.rawContent || "").replace(/<[^>]+>/g, "").slice(0, 48);
                     return (
                       <button
-                        key={m.id || sIdx}
+                        key={m.id || origIdx}
                         type="button"
                         onClick={() => jumpToStoryMessage(m.id)}
                         style={{
@@ -1140,9 +1141,14 @@ export function StoryApp({ onClose }: StoryAppProps) {
                         onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(0,0,0,0.04)"; }}
                         onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
                       >
-                        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--c-story-heading, #1e293b)" }}>
-                          {speaker} · {formatStoryTime(m.createdAt)}
-                        </span>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--c-story-heading, #1e293b)" }}>
+                            第 {origIdx + 1} 幕 · {speaker}
+                          </span>
+                          <span style={{ fontSize: 10, color: "var(--c-story-sub, #94a3b8)" }}>
+                            {formatStoryTime(m.createdAt)}
+                          </span>
+                        </div>
                         <span style={{ fontSize: 11, opacity: 0.8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {preview}…
                         </span>
@@ -1520,19 +1526,20 @@ export function StoryApp({ onClose }: StoryAppProps) {
               ) : null}
 
               {messages
-                .filter(m => {
+                .map((m, origIdx) => ({ m, origIdx }))
+                .filter(({ m }) => {
                   if (!storyExportFilterQuery.trim()) return true;
                   const q = storyExportFilterQuery.trim().toLowerCase();
                   return (m.renderedContent || m.rawContent || "").toLowerCase().includes(q);
                 })
-                .map((m, idx) => {
+                .map(({ m, origIdx }) => {
                   const isChecked = selectedStoryMsgIds.has(m.id);
                   const speaker = m.role === "user" ? (userIdentity?.name || "我") : currentCharacter.name;
                   const preview = (m.renderedContent || m.rawContent || "").replace(/<[^>]+>/g, "").slice(0, 48);
 
                   return (
                     <label
-                      key={m.id || idx}
+                      key={m.id || origIdx}
                       style={{
                         display: "flex",
                         alignItems: "flex-start",
@@ -1558,7 +1565,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
                       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                           <span style={{ fontSize: 11, fontWeight: 700, color: "var(--c-story-heading, #1e293b)" }}>
-                            第 {idx + 1} 幕 · {speaker}
+                            第 {origIdx + 1} 幕 · {speaker}
                           </span>
                           <span style={{ fontSize: 10, color: "var(--c-story-sub, #94a3b8)" }}>
                             {formatStoryTime(m.createdAt)}
