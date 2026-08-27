@@ -512,14 +512,14 @@ export function ChatSettingsPanel({
     const [offlineSearchQuery, setOfflineSearchQuery] = useState("");
     const [offlineTurnsList, setOfflineTurnsList] = useState<ChatOfflineTurn[]>([]);
     const [offlineExportRangeOpen, setOfflineExportRangeOpen] = useState(false);
-    const [offlineRangeStart, setOfflineRangeStart] = useState(1);
-    const [offlineRangeEnd, setOfflineRangeEnd] = useState(1);
+    const [selectedOfflineTurnIds, setSelectedOfflineTurnIds] = useState<Set<string>>(new Set());
+    const [offlineExportFilterQuery, setOfflineExportFilterQuery] = useState("");
 
     const openOfflineSearchPanel = () => {
         const turns = loadChatOfflineTurns(session.id);
         setOfflineTurnsList(turns);
-        setOfflineRangeStart(1);
-        setOfflineRangeEnd(turns.length || 1);
+        setSelectedOfflineTurnIds(new Set(turns.map((_, i) => String(i))));
+        setOfflineExportFilterQuery("");
         setShowOfflineSearch(true);
     };
 
@@ -1697,44 +1697,107 @@ export function ChatSettingsPanel({
                                 })}
                         </div>
 
-                        {/* 选段导出弹窗 */}
+                        {/* 自由勾选选段导出弹窗 */}
                         {offlineExportRangeOpen && (
                             <div className="modal-overlay" style={{ zIndex: 10050 }} onClick={() => setOfflineExportRangeOpen(false)}>
-                                <div className="modal-dialog" onClick={e => e.stopPropagation()}>
+                                <div className="modal-dialog" style={{ maxWidth: 400, maxHeight: "82vh", display: "flex", flexDirection: "column", gap: 10, padding: "16px 14px" }} onClick={e => e.stopPropagation()}>
                                     <div className="ts-17 font-semibold text-center text-[var(--c-text)]">
-                                        📑 选段导出线下剧本 TXT
-                                    </div>
-                                    <div className="text-xs text-[var(--c-sub)] text-center">
-                                        当前共有 <b>{offlineTurnsList.length}</b> 个线下回合。请选择范围：
+                                        📑 自由勾选与导出线下剧本 TXT
                                     </div>
 
-                                    <div className="flex items-center gap-3 w-full my-2">
-                                        <div className="flex-1 flex flex-col gap-1">
-                                            <span className="text-xs text-[var(--c-sub)]">起始回合:</span>
-                                            <input
-                                                type="number"
-                                                min={1}
-                                                max={offlineTurnsList.length || 1}
-                                                value={offlineRangeStart}
-                                                onChange={e => setOfflineRangeStart(Math.max(1, Math.min(offlineTurnsList.length || 1, parseInt(e.target.value) || 1)))}
-                                                className="ui-input text-center"
-                                            />
-                                        </div>
-                                        <span className="mt-4 text-xs text-[var(--c-sub)]">至</span>
-                                        <div className="flex-1 flex flex-col gap-1">
-                                            <span className="text-xs text-[var(--c-sub)]">结束回合:</span>
-                                            <input
-                                                type="number"
-                                                min={1}
-                                                max={offlineTurnsList.length || 1}
-                                                value={offlineRangeEnd > offlineTurnsList.length ? (offlineTurnsList.length || 1) : offlineRangeEnd}
-                                                onChange={e => setOfflineRangeEnd(Math.max(1, Math.min(offlineTurnsList.length || 1, parseInt(e.target.value) || 1)))}
-                                                className="ui-input text-center"
-                                            />
+                                    {/* 顶栏全选控制 */}
+                                    <div className="flex items-center justify-between p-2 rounded-lg bg-[var(--c-input,#f1f5f9)] text-xs">
+                                        <span className="text-[var(--c-sub)]">
+                                            已选 <b>{selectedOfflineTurnIds.size}</b> / {offlineTurnsList.length} 回合
+                                        </span>
+                                        <div className="flex gap-1.5">
+                                            <button
+                                                type="button"
+                                                className="px-2 py-1 bg-[var(--c-card-bg,#fff)] border border-[var(--c-border-light,#cbd5e1)] rounded text-xs"
+                                                onClick={() => setSelectedOfflineTurnIds(new Set(offlineTurnsList.map((_, i) => String(i))))}
+                                            >
+                                                全选
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="px-2 py-1 bg-[var(--c-card-bg,#fff)] border border-[var(--c-border-light,#cbd5e1)] rounded text-xs"
+                                                onClick={() => setSelectedOfflineTurnIds(new Set())}
+                                            >
+                                                清空
+                                            </button>
                                         </div>
                                     </div>
 
-                                    <div className="flex gap-3 w-full mt-2">
+                                    {/* 弹窗内搜索过滤 */}
+                                    <input
+                                        type="text"
+                                        value={offlineExportFilterQuery}
+                                        onChange={e => setOfflineExportFilterQuery(e.target.value)}
+                                        placeholder="过滤关键词以便快速勾选…"
+                                        className="ui-input text-xs w-full"
+                                        style={{ padding: "6px 10px" }}
+                                    />
+
+                                    {/* 回合列表 */}
+                                    <div className="flex-1 overflow-y-auto flex flex-col gap-2 max-h-[280px] pr-1">
+                                        {offlineTurnsList.length === 0 ? (
+                                            <div className="text-center py-6 text-xs text-[var(--c-sub)]">暂无线下记录</div>
+                                        ) : null}
+
+                                        {offlineTurnsList
+                                            .map((turn, origIdx) => ({ turn, origIdx }))
+                                            .filter(({ turn }) => {
+                                                if (!offlineExportFilterQuery.trim()) return true;
+                                                const q = offlineExportFilterQuery.trim().toLowerCase();
+                                                return (turn.userContent || "").toLowerCase().includes(q) ||
+                                                       (turn.assistantContent || "").toLowerCase().includes(q) ||
+                                                       (turn.summary || "").toLowerCase().includes(q);
+                                            })
+                                            .map(({ turn, origIdx }) => {
+                                                const isChecked = selectedOfflineTurnIds.has(String(origIdx));
+                                                const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${origIdx + 1}`;
+                                                const preview = turn.assistantContent || turn.userContent || turn.summary || "";
+
+                                                return (
+                                                    <label
+                                                        key={turn.id || origIdx}
+                                                        className="flex items-start gap-2.5 p-2 rounded-lg border text-xs cursor-pointer"
+                                                        style={{
+                                                            background: isChecked ? "rgba(37, 99, 235, 0.08)" : "var(--c-card-bg, #fff)",
+                                                            borderColor: isChecked ? "rgba(37, 99, 235, 0.4)" : "var(--c-border-light, #e2e8f0)",
+                                                        }}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={isChecked}
+                                                            onChange={e => {
+                                                                const next = new Set(selectedOfflineTurnIds);
+                                                                if (e.target.checked) next.add(String(origIdx));
+                                                                else next.delete(String(origIdx));
+                                                                setSelectedOfflineTurnIds(next);
+                                                            }}
+                                                            className="mt-0.5"
+                                                        />
+                                                        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="font-semibold text-[var(--c-text-title,#0f172a)]">
+                                                                    第 {origIdx + 1} 回合
+                                                                </span>
+                                                                <span className="text-[10px] text-[var(--c-sub,#94a3b8)]">
+                                                                    {timeStr}
+                                                                </span>
+                                                            </div>
+                                                            <span className="text-[var(--c-sub,#64748b)] truncate">
+                                                                {preview.slice(0, 42)}…
+                                                            </span>
+                                                        </div>
+                                                    </label>
+                                                );
+                                            })}
+                                    </div>
+
+                                    {/* 底部按钮 */}
+                                    <div className="flex gap-2 w-full mt-2">
                                         <button
                                             type="button"
                                             className="ui-btn ui-btn-ghost flex-1"
@@ -1746,21 +1809,24 @@ export function ChatSettingsPanel({
                                             type="button"
                                             className="ui-btn ui-btn-primary flex-1"
                                             onClick={() => {
-                                                if (offlineTurnsList.length === 0) return;
-                                                const startIdx = Math.max(0, Math.min(offlineRangeStart, offlineRangeEnd) - 1);
-                                                const endIdx = Math.min(offlineTurnsList.length, Math.max(offlineRangeStart, offlineRangeEnd));
-                                                const slice = offlineTurnsList.slice(startIdx, endIdx);
+                                                if (selectedOfflineTurnIds.size === 0) {
+                                                    alert("请先勾选需要导出的线下回合");
+                                                    return;
+                                                }
+
+                                                const selectedIndices = Array.from(selectedOfflineTurnIds).map(Number).sort((a, b) => a - b);
+                                                const selectedTurns = selectedIndices.map(i => ({ turn: offlineTurnsList[i], idx: i })).filter(item => Boolean(item.turn));
 
                                                 const lines: string[] = [];
                                                 lines.push(`========================================`);
-                                                lines.push(` 线下模式 · 与「${characterName}」选段剧本`);
-                                                lines.push(` 导出范围：第 ${startIdx + 1} 回合 至 第 ${endIdx} 回合 (共 ${slice.length} 回合)`);
+                                                lines.push(` 线下模式 · 与「${characterName}」精选剧本`);
+                                                lines.push(` 共精选 ${selectedTurns.length} 个线下回合`);
                                                 lines.push(` 导出时间：${new Date().toLocaleString("zh-CN")}`);
                                                 lines.push(`========================================\n`);
 
-                                                slice.forEach((turn, idx) => {
-                                                    const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${startIdx + idx + 1}`;
-                                                    lines.push(`【第 ${startIdx + idx + 1} 回合 · ${timeStr}】`);
+                                                selectedTurns.forEach(({ turn, idx }) => {
+                                                    const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${idx + 1}`;
+                                                    lines.push(`【精选第 ${idx + 1} 回合 · ${timeStr}】`);
                                                     if (turn.userContent) {
                                                         lines.push(`【你的行动与发言】:\n${turn.userContent}\n`);
                                                     }
@@ -1777,7 +1843,7 @@ export function ChatSettingsPanel({
                                                 const url = URL.createObjectURL(blob);
                                                 const a = document.createElement("a");
                                                 a.href = url;
-                                                a.download = `线下剧本_${characterName}_第${startIdx + 1}-${endIdx}回合_${new Date().toISOString().slice(0, 10)}.txt`;
+                                                a.download = `线下剧本_${characterName}_精选${selectedTurns.length}回合_${new Date().toISOString().slice(0, 10)}.txt`;
                                                 document.body.appendChild(a);
                                                 a.click();
                                                 document.body.removeChild(a);
@@ -1785,7 +1851,7 @@ export function ChatSettingsPanel({
                                                 setOfflineExportRangeOpen(false);
                                             }}
                                         >
-                                            确认导出
+                                            导出勾选的 {selectedOfflineTurnIds.size} 回合 TXT
                                         </button>
                                     </div>
                                 </div>

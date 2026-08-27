@@ -1067,10 +1067,33 @@ export function StoryApp({ onClose }: StoryAppProps) {
                         type="button"
                         onClick={() => {
                           setDrawerOpen(false);
+                          // 计算目标消息在所有消息中的倒数位置，确保 visibleMessageCount 足够展开该消息
+                          const targetIdx = messages.findIndex(item => item.id === m.id);
+                          if (targetIdx !== -1) {
+                            const neededCount = messages.length - targetIdx;
+                            if (neededCount > visibleMessageCount) {
+                              setVisibleMessageCount(neededCount + 5);
+                            }
+                          }
+                          // 等待 DOM 渲染和抽屉关闭后精确定位
                           setTimeout(() => {
-                            const el = document.querySelector(`[data-role="${m.role}"]`);
-                            if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-                          }, 300);
+                            const el = document.getElementById(`story-msg-${m.id}`);
+                            if (el) {
+                              // 如果位于折叠标签内，自动展开父级 details
+                              const parentDetails = el.querySelectorAll("details");
+                              parentDetails.forEach(d => { d.open = true; });
+                              el.scrollIntoView({ behavior: "smooth", block: "center" });
+                              // 临时高亮边框提示用户
+                              el.style.transition = "box-shadow 0.3s ease, background 0.3s ease";
+                              const origBg = el.style.background;
+                              el.style.background = "rgba(14, 165, 233, 0.12)";
+                              el.style.boxShadow = "0 0 0 2px #0ea5e9";
+                              setTimeout(() => {
+                                el.style.background = origBg;
+                                el.style.boxShadow = "none";
+                              }, 2000);
+                            }
+                          }, 280);
                         }}
                         style={{
                           textAlign: "left",
@@ -1274,6 +1297,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
                   return (
                     <article
                       key={message.id}
+                      id={`story-msg-${message.id}`}
+                      data-msg-id={message.id}
                       className="story-row"
                       data-role={message.role}
                       onPointerDown={(e) => handleMsgPointerDown(e, message.id)}
