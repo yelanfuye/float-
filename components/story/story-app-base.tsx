@@ -1444,13 +1444,14 @@ export function StoryApp({ onClose }: StoryAppProps) {
             background: "var(--c-story-bg-top, #fdfdfd)",
             borderRadius: 18,
             width: "100%",
-            maxWidth: 380,
-            maxHeight: "84vh",
-            padding: "18px 16px",
+            maxWidth: 340,
+            maxHeight: "72vh",
+            padding: "14px 12px",
             boxShadow: "0 16px 40px rgba(0,0,0,0.3)",
             display: "flex",
             flexDirection: "column",
-            gap: 12,
+            gap: 8,
+            boxSizing: "border-box",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: 15, fontWeight: 700, color: "var(--c-story-heading, #1e293b)" }}>

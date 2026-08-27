@@ -854,6 +854,19 @@ export function ChatSettingsPanel({
                         <div className="menu-label-group"><span className="menu-label">查找聊天记录</span></div>
                         <div className="menu-right"><ChevronRight size={16} /></div>
                     </button>
+                    <button
+                        className="menu-item"
+                        onClick={openOfflineSearchPanel}
+                    >
+                        <ChatInfoIcon icon={Search} color={BINDING_ACCENTS.preset} />
+                        <div className="menu-label-group">
+                            <span className="menu-label">查找线下剧情与剧本导出</span>
+                            <span className="menu-desc">检索线下主要剧情与对话，支持导出 TXT 剧本</span>
+                        </div>
+                        <div className="menu-right">
+                            <ChevronRight size={16} />
+                        </div>
+                    </button>
                     {!session.isGroup && isAgentComputerConfigured() && (
                         <button className="menu-item" onClick={() => setShowComputer(true)}>
                             <ChatInfoIcon icon={Laptop} color={BINDING_ACCENTS.memory} />
@@ -1217,19 +1230,6 @@ export function ChatSettingsPanel({
                         <div className="menu-label-group">
                             <span className="menu-label menu-label-danger">清空线上聊天记录</span>
                             <span className="menu-desc">不影响线下模式记录</span>
-                        </div>
-                    </button>
-                    <button
-                        className="menu-item"
-                        onClick={openOfflineSearchPanel}
-                    >
-                        <ChatInfoIcon icon={Search} color={BINDING_ACCENTS.preset} />
-                        <div className="menu-label-group">
-                            <span className="menu-label">查找线下剧情与剧本导出</span>
-                            <span className="menu-desc">检索线下主要剧情与对话，支持导出 TXT 剧本</span>
-                        </div>
-                        <div className="menu-right">
-                            <ChevronRight size={16} />
                         </div>
                     </button>
                     <button
@@ -1654,18 +1654,19 @@ export function ChatSettingsPanel({
                             ) : null}
 
                             {offlineTurnsList
-                                .filter(t => {
+                                .map((turn, origIdx) => ({ turn, origIdx }))
+                                .filter(({ turn }) => {
                                     if (!offlineSearchQuery.trim()) return true;
                                     const q = offlineSearchQuery.trim().toLowerCase();
-                                    return (t.userContent || "").toLowerCase().includes(q) ||
-                                           (t.assistantContent || "").toLowerCase().includes(q) ||
-                                           (t.summary || "").toLowerCase().includes(q);
+                                    return (turn.userContent || "").toLowerCase().includes(q) ||
+                                           (turn.assistantContent || "").toLowerCase().includes(q) ||
+                                           (turn.summary || "").toLowerCase().includes(q);
                                 })
-                                .map((turn, tIdx) => {
-                                    const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${tIdx+1}`;
+                                .map(({ turn, origIdx }) => {
+                                    const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${origIdx + 1}`;
                                     return (
                                         <div
-                                            key={turn.id || tIdx}
+                                            key={turn.id || origIdx}
                                             role="button"
                                             tabIndex={0}
                                             onClick={() => {
@@ -1679,7 +1680,7 @@ export function ChatSettingsPanel({
                                         >
                                             <div className="flex items-center justify-between text-xs text-[var(--c-sub,#64748b)] pb-1.5 border-b border-[var(--c-line,#f1f5f9)]">
                                                 <span className="font-semibold text-[var(--c-text-title,#0f172a)]">
-                                                    第 {tIdx + 1} 回合 · {timeStr}
+                                                    第 {origIdx + 1} 回合 · {timeStr}
                                                 </span>
                                                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--c-input,#f8fafc)]">
                                                     点击直达 ↗
@@ -1711,9 +1712,22 @@ export function ChatSettingsPanel({
 
                         {/* 自由勾选选段导出弹窗 */}
                         {offlineExportRangeOpen && (
-                            <div className="modal-overlay" style={{ zIndex: 10050 }} onClick={() => setOfflineExportRangeOpen(false)}>
-                                <div className="modal-dialog" style={{ maxWidth: 400, maxHeight: "82vh", display: "flex", flexDirection: "column", gap: 10, padding: "16px 14px" }} onClick={e => e.stopPropagation()}>
-                                    <div className="ts-17 font-semibold text-center text-[var(--c-text)]">
+                            <div className="modal-overlay" style={{ zIndex: 10050, padding: "16px" }} onClick={() => setOfflineExportRangeOpen(false)}>
+                                <div
+                                    className="modal-dialog"
+                                    style={{
+                                        width: "100%",
+                                        maxWidth: 340,
+                                        maxHeight: "72vh",
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        gap: 8,
+                                        padding: "14px 12px",
+                                        boxSizing: "border-box",
+                                    }}
+                                    onClick={e => e.stopPropagation()}
+                                >
+                                    <div className="ts-15 font-semibold text-center text-[var(--c-text)]">
                                         📑 自由勾选与导出线下剧本 TXT
                                     </div>
 
