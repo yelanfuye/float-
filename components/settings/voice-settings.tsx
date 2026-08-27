@@ -10,7 +10,7 @@ import { ConfirmDialog } from "@/components/ui/modal";
 import { Toggle, Input } from "@/components/ui/form";
 import { Alert } from "@/components/ui/feedback";
 
-const SUPPORTED_VOICE_PROVIDERS = new Set(["Minimax", "OpenAI"]);
+const SUPPORTED_VOICE_PROVIDERS = new Set(["Minimax", "OpenAI", "ElevenLabs"]);
 const MINIMAX_BASE_URL_OPTIONS = [
     { id: "cn", label: "国内版", baseUrl: "https://api.minimaxi.com/v1" },
     { id: "global", label: "海外版", baseUrl: "https://api.minimax.io/v1" },
@@ -30,6 +30,7 @@ const VOICE_PROVIDER_OPTIONS = [
     { value: "OpenAI", label: "OpenAI TTS" },
     { value: "MinimaxCN", label: "Minimax 语音国内版" },
     { value: "MinimaxGlobal", label: "Minimax 语音海外版" },
+    { value: "ElevenLabs", label: "ElevenLabs" },
 ];
 
 const DEFAULT_VOICE_CONFIGS: VoiceApiConfig[] = [
@@ -170,6 +171,16 @@ const DEFAULT_OPENAI_VOICES = [
     { id: "shimmer", name: "Shimmer" },
 ];
 
+const DEFAULT_ELEVENLABS_VOICES = [
+    { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel (女性/温和)" },
+    { id: "AZnzlk1XvdvUeBnXmlld", name: "Domi (女性/强有力)" },
+    { id: "EXAVITQu4vr4xnSDxMaL", name: "Bella (女性/甜美)" },
+    { id: "ErXwobaYiN019PkySvjV", name: "Antoni (男性/年轻)" },
+    { id: "VR6AewLTigWG4xSOukaG", name: "Arnold (男性/深沉)" },
+    { id: "pNInz6obpgDQGcFmaJgB", name: "Adam (男性/自然)" },
+    { id: "yoZ06aMxZJJ28mfd3POQ", name: "Sam (男性/沉稳)" },
+];
+
 type VoiceOption = { id: string; name: string; createdAt?: number };
 
 function uniqueOptions(options: VoiceOption[]): VoiceOption[] {
@@ -182,7 +193,9 @@ function uniqueOptions(options: VoiceOption[]): VoiceOption[] {
 }
 
 function defaultVoiceOptions(provider: string): VoiceOption[] {
-    return provider === "OpenAI" ? DEFAULT_OPENAI_VOICES : DEFAULT_MINIMAX_VOICES;
+    if (provider === "OpenAI") return DEFAULT_OPENAI_VOICES;
+    if (provider === "ElevenLabs") return DEFAULT_ELEVENLABS_VOICES;
+    return DEFAULT_MINIMAX_VOICES;
 }
 
 function voiceOptionsForConfig(config: VoiceApiConfig, fetchedVoices: Record<string, VoiceOption[]>): VoiceOption[] {
@@ -222,6 +235,7 @@ function makeCloneVoiceId(config: VoiceApiConfig): string {
 
 function providerSelectValue(config: VoiceApiConfig): string {
     if (config.provider === "OpenAI") return "OpenAI";
+    if (config.provider === "ElevenLabs") return "ElevenLabs";
     return config.baseUrl === GLOBAL_MINIMAX_BASE_URL ? "MinimaxGlobal" : "MinimaxCN";
 }
 
@@ -310,6 +324,17 @@ export function VoiceSettings() {
                 baseUrl: "https://api.openai.com/v1",
                 model: "tts-1",
                 defaultVoice: "alloy",
+            });
+            setManualModelIds(prev => ({ ...prev, [id]: true }));
+            setManualVoiceIds(prev => ({ ...prev, [id]: false }));
+            return;
+        }
+        if (providerOption === "ElevenLabs") {
+            updateConfig(id, {
+                provider: "ElevenLabs",
+                baseUrl: "https://api.elevenlabs.io/v1",
+                model: "eleven_multilingual_v2",
+                defaultVoice: "21m00Tcm4TlvDq8ikWAM",
             });
             setManualModelIds(prev => ({ ...prev, [id]: true }));
             setManualVoiceIds(prev => ({ ...prev, [id]: false }));
@@ -677,7 +702,7 @@ export function VoiceSettings() {
                                                 placeholder="输入密钥..."
                                             />
                                         </div>
-                                        {config.provider === "OpenAI" && (
+                                        {(config.provider === "OpenAI" || config.provider === "ElevenLabs") && (
                                             <>
                                                 <div className="flex flex-col gap-1">
                                                     <label className="menu-desc ml-1">接口地址 (Base URL)</label>
