@@ -296,8 +296,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
   const [cssModalOpen, setCssModalOpen] = useState(false);
   const [storySearchQuery, setStorySearchQuery] = useState("");
   const [exportRangeModalOpen, setExportRangeModalOpen] = useState(false);
-  const [exportRangeStart, setExportRangeStart] = useState(1);
-  const [exportRangeEnd, setExportRangeEnd] = useState(1);
+  const [selectedStoryMsgIds, setSelectedStoryMsgIds] = useState<Set<string>>(new Set());
+  const [storyExportFilterQuery, setStoryExportFilterQuery] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const shellInnerRef = useRef<HTMLDivElement | null>(null);
   const mountedRef = useRef(true);
@@ -1378,79 +1378,146 @@ export function StoryApp({ onClose }: StoryAppProps) {
         onStop={handleStopGeneration}
       />
 
-      {/* ====== 选段导出 TXT 模态框 ====== */}
+      {/* ====== 自由勾选 / 范围导出 TXT 模态框 ====== */}
       {exportRangeModalOpen && (
         <div style={{
           position: "absolute", inset: 0, zIndex: 320,
-          background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)",
-          display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+          background: "rgba(0,0,0,0.6)", backdropFilter: "blur(6px)",
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
         }}>
           <div style={{
             background: "var(--c-story-bg-top, #fdfdfd)",
-            borderRadius: 16,
+            borderRadius: 18,
             width: "100%",
-            maxWidth: 340,
-            padding: "20px 18px",
-            boxShadow: "0 12px 32px rgba(0,0,0,0.25)",
+            maxWidth: 380,
+            maxHeight: "84vh",
+            padding: "18px 16px",
+            boxShadow: "0 16px 40px rgba(0,0,0,0.3)",
             display: "flex",
             flexDirection: "column",
-            gap: 14,
+            gap: 12,
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: 15, fontWeight: 700, color: "var(--c-story-heading, #1e293b)" }}>
-                📑 选段导出 TXT 剧本
+                📑 自由勾选与导出 TXT 剧本
               </span>
-              <button onClick={() => setExportRangeModalOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-story-sub, #94a3b8)" }}>
+              <button onClick={() => setExportRangeModalOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-story-sub, #94a3b8)", fontSize: 16 }}>
                 ✕
               </button>
             </div>
 
-            <div style={{ fontSize: 12, color: "var(--c-story-sub, #64748b)", lineHeight: 1.5 }}>
-              当前共有 <b>{messages.length}</b> 幕/段剧情。请选择要导出的起始幕与结束幕范围：
-            </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 11, color: "var(--c-story-sub, #94a3b8)" }}>起始幕:</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={messages.length || 1}
-                  value={exportRangeStart}
-                  onChange={(e) => setExportRangeStart(Math.max(1, Math.min(messages.length || 1, parseInt(e.target.value) || 1)))}
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: 6,
-                    border: "1px solid var(--c-story-drawer-border, rgba(0,0,0,0.12))",
-                    background: "var(--c-story-css-box-bg, #f8fafc)",
-                    fontSize: 13,
-                    fontWeight: 600,
+            {/* 顶栏控制：全选、反选、筛选 */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--c-story-panel, rgba(0,0,0,0.03))", padding: "8px 10px", borderRadius: 8 }}>
+              <span style={{ fontSize: 12, color: "var(--c-story-text, #475569)" }}>
+                已选 <b>{selectedStoryMsgIds.size}</b> / {messages.length} 幕
+              </span>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allIds = new Set(messages.map(m => m.id));
+                    setSelectedStoryMsgIds(allIds);
                   }}
-                />
-              </div>
-
-              <span style={{ marginTop: 16, color: "var(--c-story-sub, #94a3b8)" }}>至</span>
-
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 11, color: "var(--c-story-sub, #94a3b8)" }}>结束幕:</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={messages.length || 1}
-                  value={exportRangeEnd > messages.length ? (messages.length || 1) : exportRangeEnd}
-                  onChange={(e) => setExportRangeEnd(Math.max(1, Math.min(messages.length || 1, parseInt(e.target.value) || 1)))}
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: 6,
-                    border: "1px solid var(--c-story-drawer-border, rgba(0,0,0,0.12))",
-                    background: "var(--c-story-css-box-bg, #f8fafc)",
-                    fontSize: 13,
-                    fontWeight: 600,
-                  }}
-                />
+                  style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, border: "1px solid var(--c-story-drawer-border, rgba(0,0,0,0.12))", background: "#fff", cursor: "pointer" }}
+                >
+                  全选
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedStoryMsgIds(new Set())}
+                  style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, border: "1px solid var(--c-story-drawer-border, rgba(0,0,0,0.12))", background: "#fff", cursor: "pointer" }}
+                >
+                  清空
+                </button>
               </div>
             </div>
 
+            {/* 列表内搜索过滤 */}
+            <input
+              type="text"
+              value={storyExportFilterQuery}
+              onChange={(e) => setStoryExportFilterQuery(e.target.value)}
+              placeholder="过滤段落关键词以便快速勾选…"
+              style={{
+                width: "100%", boxSizing: "border-box",
+                padding: "6px 10px", borderRadius: 6,
+                border: "1px solid var(--c-story-drawer-border, rgba(0,0,0,0.12))",
+                background: "var(--c-story-css-box-bg, #f8fafc)",
+                fontSize: 12,
+              }}
+            />
+
+            {/* 段落自由勾选列表 */}
+            <div style={{
+              flex: 1,
+              maxHeight: 280,
+              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              paddingRight: 2,
+            }}>
+              {messages.length === 0 ? (
+                <div style={{ padding: "20px 0", textAlign: "center", fontSize: 12, color: "var(--c-story-sub, #94a3b8)" }}>
+                  暂无剧情内容
+                </div>
+              ) : null}
+
+              {messages
+                .filter(m => {
+                  if (!storyExportFilterQuery.trim()) return true;
+                  const q = storyExportFilterQuery.trim().toLowerCase();
+                  return (m.renderedContent || m.rawContent || "").toLowerCase().includes(q);
+                })
+                .map((m, idx) => {
+                  const isChecked = selectedStoryMsgIds.has(m.id);
+                  const speaker = m.role === "user" ? (userIdentity?.name || "我") : currentCharacter.name;
+                  const preview = (m.renderedContent || m.rawContent || "").replace(/<[^>]+>/g, "").slice(0, 48);
+
+                  return (
+                    <label
+                      key={m.id || idx}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 8,
+                        padding: "7px 9px",
+                        borderRadius: 8,
+                        background: isChecked ? "rgba(14, 165, 233, 0.08)" : "var(--c-story-panel, rgba(0,0,0,0.02))",
+                        border: isChecked ? "1px solid rgba(14, 165, 233, 0.4)" : "1px solid var(--c-story-drawer-border, rgba(0,0,0,0.06))",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          const next = new Set(selectedStoryMsgIds);
+                          if (e.target.checked) next.add(m.id);
+                          else next.delete(m.id);
+                          setSelectedStoryMsgIds(next);
+                        }}
+                        style={{ marginTop: 2, accentColor: "#0ea5e9" }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: "var(--c-story-heading, #1e293b)" }}>
+                            第 {idx + 1} 幕 · {speaker}
+                          </span>
+                          <span style={{ fontSize: 10, color: "var(--c-story-sub, #94a3b8)" }}>
+                            {formatStoryTime(m.createdAt)}
+                          </span>
+                        </div>
+                        <span style={{ fontSize: 11, color: "var(--c-story-text, #475569)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {preview}…
+                        </span>
+                      </div>
+                    </label>
+                  );
+                })}
+            </div>
+
+            {/* 底部按钮 */}
             <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
               <button
                 type="button"
@@ -1472,26 +1539,25 @@ export function StoryApp({ onClose }: StoryAppProps) {
               <button
                 type="button"
                 onClick={() => {
-                  if (messages.length === 0) {
-                    alert("当前没有可导出的剧情");
+                  if (selectedStoryMsgIds.size === 0) {
+                    alert("请先勾选需要导出的剧情段落");
                     return;
                   }
-                  const startIdx = Math.max(0, Math.min(exportRangeStart, exportRangeEnd) - 1);
-                  const endIdx = Math.min(messages.length, Math.max(exportRangeStart, exportRangeEnd));
-                  const slice = messages.slice(startIdx, endIdx);
+
+                  const selectedList = messages.filter(m => selectedStoryMsgIds.has(m.id));
 
                   const lines: string[] = [];
                   lines.push(`========================================`);
-                  lines.push(` 剧情模式 · 《${currentCharacter.name}》选段剧本`);
+                  lines.push(` 剧情模式 · 《${currentCharacter.name}》自选剧本`);
                   lines.push(` 角色：${currentCharacter.name} x ${userIdentity?.name || "我"}`);
-                  lines.push(` 导出范围：第 ${startIdx + 1} 幕 至 第 ${endIdx} 幕 (共 ${slice.length} 幕)`);
+                  lines.push(` 共精选 ${selectedList.length} 幕/段剧情`);
                   lines.push(` 导出时间：${new Date().toLocaleString("zh-CN")}`);
                   lines.push(`========================================\n`);
 
-                  slice.forEach((m, idx) => {
+                  selectedList.forEach((m, idx) => {
                     const speaker = m.role === "user" ? (userIdentity?.name || "我") : currentCharacter.name;
                     const cleanTxt = (m.renderedContent || m.rawContent || "").replace(/<[^>]+>/g, "").trim();
-                    lines.push(`【第 ${startIdx + idx + 1} 幕】 ${speaker} (${formatStoryTime(m.createdAt)}):`);
+                    lines.push(`【精选第 ${idx + 1} 幕】 ${speaker} (${formatStoryTime(m.createdAt)}):`);
                     lines.push(cleanTxt);
                     lines.push(`\n----------------------------------------\n`);
                   });
@@ -1500,7 +1566,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement("a");
                   a.href = url;
-                  a.download = `剧情剧本_${currentCharacter.name}_第${startIdx + 1}-${endIdx}幕_${new Date().toISOString().slice(0, 10)}.txt`;
+                  a.download = `剧情剧本_${currentCharacter.name}_精选${selectedList.length}幕_${new Date().toISOString().slice(0, 10)}.txt`;
                   document.body.appendChild(a);
                   a.click();
                   document.body.removeChild(a);
@@ -1519,7 +1585,7 @@ export function StoryApp({ onClose }: StoryAppProps) {
                   cursor: "pointer",
                 }}
               >
-                确认导出
+                导出勾选的 {selectedStoryMsgIds.size} 幕 TXT
               </button>
             </div>
           </div>
