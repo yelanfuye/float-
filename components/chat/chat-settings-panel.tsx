@@ -186,6 +186,7 @@ type ChatSettingsPanelProps = {
     session: ChatSession;
     onClose: () => void;
     onJumpToMessage?: (messageId: string) => void;
+    onJumpToOfflineTurn?: (turnId: string) => void;
     onDeleteFriend?: () => void;
     onSessionDeleted?: () => void;
     onToolHistoryCleared?: () => void;
@@ -1665,13 +1666,24 @@ export function ChatSettingsPanel({
                                     return (
                                         <div
                                             key={turn.id || tIdx}
-                                            className="p-3.5 rounded-xl border border-[var(--c-border-light,#e2e8f0)] bg-[var(--c-card-bg,#fff)] flex flex-col gap-2 shadow-sm"
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={() => {
+                                                if (onJumpToOfflineTurn) {
+                                                    onJumpToOfflineTurn(turn.id);
+                                                    setShowOfflineSearch(false);
+                                                    onClose();
+                                                }
+                                            }}
+                                            className="p-3.5 rounded-xl border border-[var(--c-border-light,#e2e8f0)] bg-[var(--c-card-bg,#fff)] flex flex-col gap-2 shadow-sm cursor-pointer hover:border-[var(--c-accent,#2563eb)] transition-colors"
                                         >
                                             <div className="flex items-center justify-between text-xs text-[var(--c-sub,#64748b)] pb-1.5 border-b border-[var(--c-line,#f1f5f9)]">
                                                 <span className="font-semibold text-[var(--c-text-title,#0f172a)]">
                                                     第 {tIdx + 1} 回合 · {timeStr}
                                                 </span>
-                                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--c-input,#f8fafc)]">线下剧情</span>
+                                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--c-input,#f8fafc)]">
+                                                    点击直达 ↗
+                                                </span>
                                             </div>
 
                                             {turn.userContent ? (

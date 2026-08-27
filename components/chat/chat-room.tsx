@@ -5233,7 +5233,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                             return (
                             <Fragment key={turn.id}>
                             {showTime && <div className="chat-offline-time">{formatChatUiTime(turn.createdAt)}</div>}
-                            <div className="chat-offline-turn">
+                            <div id={`offline-turn-${turn.id}`} data-offline-turn-id={turn.id} className="chat-offline-turn">
                                 <div className="chat-offline-entry" data-role="user" style={offlineDisplay.userContent.trim() ? undefined : { display: "none" }}>
                                     {/* 头像占位：默认 display:none（见 chat.css），供自定义 CSS 显示 */}
                                     <div className="chat-offline-avatar" aria-hidden="true">
@@ -5960,6 +5960,56 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         onJumpToMessage={(messageId) => {
                             setShowSettings(false);
                             jumpToStoredMessage(messageId);
+                        }}
+                        onJumpToOfflineTurn={(turnId) => {
+                            setShowSettings(false);
+                            // 确保切入线下模式
+                            if (!offlineMode) {
+                                setOfflineMode(true);
+                                kvSet(CHAT_OFFLINE_MODE_PREFIX + session.id, "1");
+                            }
+                            const allTurns = loadChatOfflineTurns(session.id);
+                            const targetIdx = allTurns.findIndex(t => t.id === turnId);
+                            if (targetIdx !== -1) {
+                                const neededCount = allTurns.length - targetIdx + 5;
+                                setOfflineVisibleCount(prev => Math.max(prev, neededCount));
+                            }
+
+                            let attempts = 0;
+                            const runScroll = () => {
+                                attempts += 1;
+                                const container = scrollRef.current;
+                                const el = document.getElementById(`offline-turn-${turnId}`) || (document.querySelector(`[data-offline-turn-id="${turnId}"]`) as HTMLElement | null);
+                                if (el && container) {
+                                    const containerRect = container.getBoundingClientRect();
+                                    const elRect = el.getBoundingClientRect();
+                                    const relativeTop = elRect.top - containerRect.top + container.scrollTop;
+                                    const targetScrollTop = relativeTop - (container.clientHeight / 2) + (elRect.height / 2);
+
+                                    container.scrollTo({
+                                        top: Math.max(0, targetScrollTop),
+                                        behavior: attempts <= 1 ? "auto" : "smooth",
+                                    });
+
+                                    el.style.transition = "outline 0.3s ease, background 0.3s ease";
+                                    el.style.outline = "2px solid #2563eb";
+                                    el.style.outlineOffset = "4px";
+                                    el.style.borderRadius = "12px";
+                                    el.style.background = "rgba(37, 99, 235, 0.08)";
+
+                                    setTimeout(() => {
+                                        if (el) {
+                                            el.style.outline = "none";
+                                            el.style.background = "";
+                                        }
+                                    }, 2800);
+                                }
+
+                                if (attempts < 5) {
+                                    setTimeout(runScroll, attempts === 1 ? 80 : 200);
+                                }
+                            };
+                            setTimeout(runScroll, 60);
                         }}
                         onToolHistoryCleared={syncMessagesFromStorage}
                         offlineHistoryBusy={isOfflineGenerating}
