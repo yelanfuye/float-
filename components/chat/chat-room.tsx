@@ -5963,23 +5963,27 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         }}
                         onJumpToOfflineTurn={(turnId) => {
                             setShowSettings(false);
-                            // 确保切入线下模式
+                            // 1. 同步切入线下模式状态
                             if (!offlineMode) {
                                 setOfflineMode(true);
                                 kvSet(CHAT_OFFLINE_MODE_PREFIX + session.id, "1");
                             }
+                            // 2. 重新从存储中装载最新的线下历史并计算需要展开的容量
                             const allTurns = loadChatOfflineTurns(session.id);
+                            setOfflineTurns(allTurns);
                             const targetIdx = allTurns.findIndex(t => t.id === turnId);
                             if (targetIdx !== -1) {
-                                const neededCount = allTurns.length - targetIdx + 5;
+                                const neededCount = allTurns.length - targetIdx + 8;
                                 setOfflineVisibleCount(prev => Math.max(prev, neededCount));
                             }
 
+                            // 3. 强力多阶轮询与原生高精度定位
                             let attempts = 0;
                             const runScroll = () => {
                                 attempts += 1;
                                 const container = scrollRef.current;
                                 const el = document.getElementById(`offline-turn-${turnId}`) || (document.querySelector(`[data-offline-turn-id="${turnId}"]`) as HTMLElement | null);
+                                
                                 if (el && container) {
                                     const containerRect = container.getBoundingClientRect();
                                     const elRect = el.getBoundingClientRect();
@@ -5988,27 +5992,29 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
 
                                     container.scrollTo({
                                         top: Math.max(0, targetScrollTop),
-                                        behavior: attempts <= 1 ? "auto" : "smooth",
+                                        behavior: attempts <= 2 ? "auto" : "smooth",
                                     });
 
-                                    el.style.transition = "outline 0.3s ease, background 0.3s ease";
-                                    el.style.outline = "2px solid #2563eb";
-                                    el.style.outlineOffset = "4px";
+                                    el.style.transition = "box-shadow 0.3s ease, background 0.3s ease";
+                                    el.style.boxShadow = "0 0 0 3px #2563eb";
                                     el.style.borderRadius = "12px";
-                                    el.style.background = "rgba(37, 99, 235, 0.08)";
+                                    el.style.background = "rgba(37, 99, 235, 0.12)";
 
                                     setTimeout(() => {
                                         if (el) {
-                                            el.style.outline = "none";
+                                            el.style.boxShadow = "none";
                                             el.style.background = "";
                                         }
                                     }, 2800);
+                                    return;
                                 }
 
-                                if (attempts < 5) {
-                                    setTimeout(runScroll, attempts === 1 ? 80 : 200);
+                                if (attempts < 12) {
+                                    setTimeout(runScroll, attempts < 4 ? 60 : 120);
                                 }
                             };
+
+                            // 等待 React 在关闭 Settings 模态框并切到线下视图后立即执行定位
                             setTimeout(runScroll, 60);
                         }}
                         onToolHistoryCleared={syncMessagesFromStorage}
