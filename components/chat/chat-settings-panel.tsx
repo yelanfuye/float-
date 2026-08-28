@@ -186,7 +186,7 @@ type ChatSettingsPanelProps = {
     session: ChatSession;
     onClose: () => void;
     onJumpToMessage?: (messageId: string) => void;
-    onJumpToOfflineTurn?: (turnId: string) => void;
+    onOpenOfflineSearchFloating?: () => void;
     onDeleteFriend?: () => void;
     onSessionDeleted?: () => void;
     onToolHistoryCleared?: () => void;
@@ -858,7 +858,14 @@ export function ChatSettingsPanel({
                     </button>
                     <button
                         className="menu-item"
-                        onClick={openOfflineSearchPanel}
+                        onClick={() => {
+                            if (onOpenOfflineSearchFloating) {
+                                onClose();
+                                onOpenOfflineSearchFloating();
+                            } else {
+                                openOfflineSearchPanel();
+                            }
+                        }}
                     >
                         <ChatInfoIcon icon={Search} color={BINDING_ACCENTS.preset} />
                         <div className="menu-label-group">

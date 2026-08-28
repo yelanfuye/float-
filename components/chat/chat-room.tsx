@@ -1093,6 +1093,12 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [callInitiatorName, setCallInitiatorName] = useState<string>("");
     const [userIdentity, setUserIdentity] = useState<UserIdentity | null>(null);
     const [enterToSendEnabled, setEnterToSendEnabled] = useState(() => loadChatAppSettings().enterToSendEnabled === true);
+    // 悬浮检索与剧本导出悬浮窗
+    const [offlineSearchFloatOpen, setOfflineSearchFloatOpen] = useState(false);
+    const [offlineSearchFloatQuery, setOfflineSearchFloatQuery] = useState("");
+    const [offlineExportRangeOpen, setOfflineExportRangeOpen] = useState(false);
+    const [selectedOfflineExportTurnIds, setSelectedOfflineExportTurnIds] = useState<Set<string>>(new Set());
+    const [offlineExportFilterQuery, setOfflineExportFilterQuery] = useState("");
 
     // Rich media input modals
     const [richModal, setRichModal] = useState<RichModalKind | null>(null);
@@ -5191,6 +5197,514 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 className="chat-plugin-header chat-room-main-pane"
             />
 
+            {/* 线下剧情检索与剧本导出悬浮窗 */}
+            {offlineMode && offlineSearchFloatOpen && (
+                <div
+                    className="chat-room-main-pane"
+                    style={{
+                        position: "absolute",
+                        top: 54,
+                        left: 12,
+                        right: 12,
+                        zIndex: 45,
+                        background: "var(--c-page-body-bg, #ffffff)",
+                        borderRadius: 16,
+                        boxShadow: "0 10px 30px rgba(0,0,0,0.18), 0 0 0 1px var(--c-border, rgba(0,0,0,0.08))",
+                        padding: "12px 14px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 10,
+                    }}
+                >
+                    {/* 顶栏：搜索输入 + 关闭按钮 */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ position: "relative", flex: 1, display: "flex", alignItems: "center" }}>
+                            <input
+                                autoFocus
+                                type="text"
+                                value={offlineSearchFloatQuery}
+                                onChange={e => setOfflineSearchFloatQuery(e.target.value)}
+                                placeholder="搜索线下主要剧情、对白或行动…"
+                                style={{
+                                    width: "100%",
+                                    boxSizing: "border-box",
+                                    padding: "7px 28px 7px 10px",
+                                    borderRadius: 8,
+                                    border: "1px solid var(--c-border, rgba(0,0,0,0.12))",
+                                    background: "var(--c-input, #f8fafc)",
+                                    color: "var(--c-text, #1e293b)",
+                                    fontSize: 13,
+                                    outline: "none",
+                                }}
+                            />
+                            {offlineSearchFloatQuery && (
+                                <button
+                                    type="button"
+                                    onClick={() => setOfflineSearchFloatQuery("")}
+                                    style={{
+                                        position: "absolute",
+                                        right: 6,
+                                        background: "none",
+                                        border: "none",
+                                        color: "var(--c-sub, #94a3b8)",
+                                        cursor: "pointer",
+                                        fontSize: 12,
+                                    }}
+                                >
+                                    ✕
+                                </button>
+                            )}
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setOfflineSearchFloatOpen(false)}
+                            style={{
+                                background: "none",
+                                border: "none",
+                                cursor: "pointer",
+                                color: "var(--c-sub, #64748b)",
+                                fontSize: 16,
+                                padding: "2px 4px",
+                            }}
+                            aria-label="关闭搜索悬浮窗"
+                        >
+                            ✕
+                        </button>
+                    </div>
+
+                    {/* 导出按钮操作栏 */}
+                    <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (offlineTurns.length === 0) {
+                                    showChatToast("当前暂无线下剧情记录");
+                                    return;
+                                }
+                                const lines: string[] = [];
+                                lines.push(`========================================`);
+                                lines.push(` 线下模式 · 与「${session.alias || character?.name || "对方"}」完整剧本`);
+                                lines.push(` 导出时间：${new Date().toLocaleString("zh-CN")}`);
+                                lines.push(` 共 ${offlineTurns.length} 个线下回合`);
+                                lines.push(`========================================\n`);
+
+                                offlineTurns.forEach((turn, idx) => {
+                                    const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${idx+1}`;
+                                    lines.push(`【第 ${idx + 1} 回合 · ${timeStr}】`);
+                                    if (turn.userContent) {
+                                        lines.push(`【你的行动与发言】:\n${turn.userContent}\n`);
+                                    }
+                                    if (turn.assistantContent) {
+                                        lines.push(`【${session.alias || character?.name || "对方"}的主要剧情展开】:\n${turn.assistantContent}\n`);
+                                    }
+                                    if (turn.summary) {
+                                        lines.push(`[剧情梗概]: ${turn.summary}\n`);
+                                    }
+                                    lines.push(`----------------------------------------\n`);
+                                });
+
+                                const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = `线下剧本_${session.alias || character?.name || "对方"}_全本_${new Date().toISOString().slice(0, 10)}.txt`;
+                                document.body.appendChild(a);
+                                a.click();
+                                document.body.removeChild(a);
+                                URL.revokeObjectURL(url);
+                            }}
+                            style={{
+                                flex: 1,
+                                padding: "6px 0",
+                                borderRadius: 6,
+                                border: "none",
+                                background: "var(--c-accent, #2563eb)",
+                                color: "#fff",
+                                fontSize: 12,
+                                fontWeight: 500,
+                                cursor: "pointer",
+                            }}
+                        >
+                            📥 导出全本 TXT
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSelectedOfflineExportTurnIds(new Set(offlineTurns.map((_, i) => String(i))));
+                                setOfflineExportFilterQuery("");
+                                setOfflineExportRangeOpen(true);
+                            }}
+                            style={{
+                                flex: 1,
+                                padding: "6px 0",
+                                borderRadius: 6,
+                                border: "1px solid var(--c-border, rgba(0,0,0,0.12))",
+                                background: "var(--c-card, #fff)",
+                                color: "var(--c-text, #334155)",
+                                fontSize: 12,
+                                fontWeight: 500,
+                                cursor: "pointer",
+                            }}
+                        >
+                            📑 选段导出 TXT
+                        </button>
+                    </div>
+
+                    {/* 搜索结果折叠列表（单行摘要，点击直接原地跳转） */}
+                    {offlineSearchFloatQuery.trim() ? (
+                        <div
+                            style={{
+                                maxHeight: 190,
+                                overflowY: "auto",
+                                borderTop: "1px solid var(--c-border, rgba(0,0,0,0.06))",
+                                paddingTop: 6,
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 4,
+                            }}
+                        >
+                            {offlineTurns
+                                .map((turn, origIdx) => ({ turn, origIdx }))
+                                .filter(({ turn }) => {
+                                    const q = offlineSearchFloatQuery.trim().toLowerCase();
+                                    return (turn.userContent || "").toLowerCase().includes(q) ||
+                                           (turn.assistantContent || "").toLowerCase().includes(q) ||
+                                           (turn.summary || "").toLowerCase().includes(q);
+                                })
+                                .map(({ turn, origIdx }) => {
+                                    const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${origIdx + 1}`;
+                                    const preview = (turn.assistantContent || turn.userContent || turn.summary || "").replace(/\s+/g, " ").slice(0, 36);
+
+                                    return (
+                                        <button
+                                            key={turn.id || origIdx}
+                                            type="button"
+                                            onClick={() => {
+                                                setOfflineSearchFloatOpen(false);
+                                                // 自动展开到目标位置
+                                                const targetIdx = offlineTurns.findIndex(t => t.id === turn.id);
+                                                if (targetIdx !== -1) {
+                                                    const neededCount = offlineTurns.length - targetIdx + 8;
+                                                    setOfflineVisibleCount(prev => Math.max(prev, neededCount));
+                                                }
+                                                // 多轮定位
+                                                let attempts = 0;
+                                                const runScroll = () => {
+                                                    attempts += 1;
+                                                    const container = scrollRef.current;
+                                                    const el = document.getElementById(`offline-turn-${turn.id}`) || (document.querySelector(`[data-offline-turn-id="${turn.id}"]`) as HTMLElement | null);
+                                                    if (el && container) {
+                                                        const containerRect = container.getBoundingClientRect();
+                                                        const elRect = el.getBoundingClientRect();
+                                                        const relativeTop = elRect.top - containerRect.top + container.scrollTop;
+                                                        const targetScrollTop = relativeTop - (container.clientHeight / 2) + (elRect.height / 2);
+
+                                                        container.scrollTo({
+                                                            top: Math.max(0, targetScrollTop),
+                                                            behavior: "smooth",
+                                                        });
+
+                                                        el.style.transition = "box-shadow 0.3s ease, background 0.3s ease";
+                                                        el.style.boxShadow = "0 0 0 3px #2563eb";
+                                                        el.style.borderRadius = "12px";
+                                                        el.style.background = "rgba(37, 99, 235, 0.12)";
+
+                                                        setTimeout(() => {
+                                                            if (el) {
+                                                                el.style.boxShadow = "none";
+                                                                el.style.background = "";
+                                                            }
+                                                        }, 2800);
+                                                        return;
+                                                    }
+                                                    if (attempts < 10) setTimeout(runScroll, 80);
+                                                };
+                                                setTimeout(runScroll, 50);
+                                            }}
+                                            style={{
+                                                textAlign: "left",
+                                                padding: "6px 8px",
+                                                borderRadius: 6,
+                                                background: "none",
+                                                border: "none",
+                                                cursor: "pointer",
+                                                display: "flex",
+                                                flexDirection: "column",
+                                                gap: 2,
+                                                color: "var(--c-text, #1e293b)",
+                                            }}
+                                            onMouseEnter={e => { e.currentTarget.style.background = "rgba(0,0,0,0.04)"; }}
+                                            onMouseLeave={e => { e.currentTarget.style.background = "none"; }}
+                                        >
+                                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--c-text, #1e293b)" }}>
+                                                    第 {origIdx + 1} 回合
+                                                </span>
+                                                <span style={{ fontSize: 10, color: "var(--c-sub, #94a3b8)" }}>
+                                                    {timeStr}
+                                                </span>
+                                            </div>
+                                            <span style={{ fontSize: 11, color: "var(--c-sub, #64748b)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                {preview}…
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            {offlineTurns.filter(turn => {
+                                const q = offlineSearchFloatQuery.trim().toLowerCase();
+                                return (turn.userContent || "").toLowerCase().includes(q) ||
+                                       (turn.assistantContent || "").toLowerCase().includes(q) ||
+                                       (turn.summary || "").toLowerCase().includes(q);
+                            }).length === 0 ? (
+                                <div style={{ padding: "10px 0", fontSize: 11, color: "var(--c-sub, #94a3b8)", textAlign: "center" }}>
+                                    未匹配到关键词回合
+                                </div>
+                            ) : null}
+                        </div>
+                    ) : null}
+                </div>
+            )}
+
+            {/* 选段导出 TXT 模态框（精准 340px 弹窗） */}
+            {offlineMode && offlineExportRangeOpen && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 10050,
+                        background: "rgba(0,0,0,0.6)",
+                        backdropFilter: "blur(6px)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                    }}
+                    onClick={() => setOfflineExportRangeOpen(false)}
+                >
+                    <div
+                        style={{
+                            background: "var(--c-page-body-bg, #ffffff)",
+                            borderRadius: 18,
+                            width: "100%",
+                            maxWidth: 340,
+                            maxHeight: "72vh",
+                            padding: "14px 12px",
+                            boxShadow: "0 16px 40px rgba(0,0,0,0.3)",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 8,
+                            boxSizing: "border-box",
+                        }}
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ fontSize: 15, fontWeight: 700, color: "var(--c-text, #1e293b)" }}>
+                                📑 自由勾选与导出线下剧本 TXT
+                            </span>
+                            <button
+                                onClick={() => setOfflineExportRangeOpen(false)}
+                                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-sub, #94a3b8)", fontSize: 16 }}
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        {/* 顶栏全选控制 */}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "color-mix(in srgb, var(--c-text) 5%, transparent)", padding: "6px 8px", borderRadius: 8 }}>
+                            <span style={{ fontSize: 12, color: "var(--c-text, #475569)" }}>
+                                已选 <b>{selectedOfflineExportTurnIds.size}</b> / {offlineTurns.length} 回合
+                            </span>
+                            <div style={{ display: "flex", gap: 6 }}>
+                                <button
+                                    type="button"
+                                    style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, border: "1px solid var(--c-border, rgba(0,0,0,0.12))", background: "var(--c-card, #fff)", color: "var(--c-text, #334155)", cursor: "pointer" }}
+                                    onClick={() => setSelectedOfflineExportTurnIds(new Set(offlineTurns.map((_, i) => String(i))))}
+                                >
+                                    全选
+                                </button>
+                                <button
+                                    type="button"
+                                    style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, border: "1px solid var(--c-border, rgba(0,0,0,0.12))", background: "var(--c-card, #fff)", color: "var(--c-text, #334155)", cursor: "pointer" }}
+                                    onClick={() => setSelectedOfflineExportTurnIds(new Set())}
+                                >
+                                    清空
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* 弹窗内搜索过滤 */}
+                        <input
+                            type="text"
+                            value={offlineExportFilterQuery}
+                            onChange={e => setOfflineExportFilterQuery(e.target.value)}
+                            placeholder="过滤关键词以便快速勾选…"
+                            style={{
+                                width: "100%",
+                                boxSizing: "border-box",
+                                padding: "6px 10px",
+                                borderRadius: 6,
+                                border: "1px solid var(--c-border, rgba(0,0,0,0.12))",
+                                background: "var(--c-input, #f8fafc)",
+                                fontSize: 12,
+                                outline: "none",
+                            }}
+                        />
+
+                        {/* 回合列表 */}
+                        <div
+                            style={{
+                                flex: 1,
+                                maxHeight: 280,
+                                overflowY: "auto",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 6,
+                                paddingRight: 2,
+                            }}
+                        >
+                            {offlineTurns.length === 0 ? (
+                                <div style={{ padding: "20px 0", textAlign: "center", fontSize: 12, color: "var(--c-sub, #94a3b8)" }}>暂无线下记录</div>
+                            ) : null}
+
+                            {offlineTurns
+                                .map((turn, origIdx) => ({ turn, origIdx }))
+                                .filter(({ turn }) => {
+                                    if (!offlineExportFilterQuery.trim()) return true;
+                                    const q = offlineExportFilterQuery.trim().toLowerCase();
+                                    return (turn.userContent || "").toLowerCase().includes(q) ||
+                                           (turn.assistantContent || "").toLowerCase().includes(q) ||
+                                           (turn.summary || "").toLowerCase().includes(q);
+                                })
+                                .map(({ turn, origIdx }) => {
+                                    const isChecked = selectedOfflineExportTurnIds.has(String(origIdx));
+                                    const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${origIdx + 1}`;
+                                    const preview = (turn.assistantContent || turn.userContent || turn.summary || "").replace(/\s+/g, " ").slice(0, 48);
+
+                                    return (
+                                        <label
+                                            key={turn.id || origIdx}
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "flex-start",
+                                                gap: 8,
+                                                padding: "7px 9px",
+                                                borderRadius: 8,
+                                                background: isChecked ? "rgba(37, 99, 235, 0.08)" : "color-mix(in srgb, var(--c-text) 2%, transparent)",
+                                                border: isChecked ? "1px solid rgba(37, 99, 235, 0.4)" : "1px solid var(--c-border, rgba(0,0,0,0.06))",
+                                                cursor: "pointer",
+                                            }}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={isChecked}
+                                                onChange={e => {
+                                                    const next = new Set(selectedOfflineExportTurnIds);
+                                                    if (e.target.checked) next.add(String(origIdx));
+                                                    else next.delete(String(origIdx));
+                                                    setSelectedOfflineExportTurnIds(next);
+                                                }}
+                                                style={{ marginTop: 2, accentColor: "#2563eb" }}
+                                            />
+                                            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                                    <span style={{ fontSize: 11, fontWeight: 700, color: "var(--c-text, #1e293b)" }}>
+                                                        第 {origIdx + 1} 回合
+                                                    </span>
+                                                    <span style={{ fontSize: 10, color: "var(--c-sub, #94a3b8)" }}>
+                                                        {timeStr}
+                                                    </span>
+                                                </div>
+                                                <span style={{ fontSize: 11, color: "var(--c-sub, #64748b)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                    {preview}…
+                                                </span>
+                                            </div>
+                                        </label>
+                                    );
+                                })}
+                        </div>
+
+                        {/* 底部按钮 */}
+                        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                            <button
+                                type="button"
+                                style={{
+                                    flex: 1,
+                                    padding: "9px 0",
+                                    borderRadius: 8,
+                                    border: "1px solid var(--c-border, rgba(0,0,0,0.1))",
+                                    background: "color-mix(in srgb, var(--c-text) 4%, transparent)",
+                                    color: "var(--c-text, #475569)",
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                }}
+                                onClick={() => setOfflineExportRangeOpen(false)}
+                            >
+                                取消
+                            </button>
+                            <button
+                                type="button"
+                                style={{
+                                    flex: 1.4,
+                                    padding: "9px 0",
+                                    borderRadius: 8,
+                                    border: "none",
+                                    background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
+                                    color: "#fff",
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                }}
+                                onClick={() => {
+                                    if (selectedOfflineExportTurnIds.size === 0) {
+                                        showChatToast("请先勾选需要导出的线下回合");
+                                        return;
+                                    }
+
+                                    const selectedIndices = Array.from(selectedOfflineExportTurnIds).map(Number).sort((a, b) => a - b);
+                                    const selectedTurns = selectedIndices.map(i => ({ turn: offlineTurns[i], idx: i })).filter(item => Boolean(item.turn));
+
+                                    const lines: string[] = [];
+                                    lines.push(`========================================`);
+                                    lines.push(` 线下模式 · 与「${session.alias || character?.name || "对方"}」精选剧本`);
+                                    lines.push(` 共精选 ${selectedTurns.length} 个线下回合`);
+                                    lines.push(` 导出时间：${new Date().toLocaleString("zh-CN")}`);
+                                    lines.push(`========================================\n`);
+
+                                    selectedTurns.forEach(({ turn, idx }) => {
+                                        const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${idx + 1}`;
+                                        lines.push(`【精选第 ${idx + 1} 回合 · ${timeStr}】`);
+                                        if (turn.userContent) {
+                                            lines.push(`【你的行动与发言】:\n${turn.userContent}\n`);
+                                        }
+                                        if (turn.assistantContent) {
+                                            lines.push(`【${session.alias || character?.name || "对方"}的主要剧情展开】:\n${turn.assistantContent}\n`);
+                                        }
+                                        if (turn.summary) {
+                                            lines.push(`[剧情梗概]: ${turn.summary}\n`);
+                                        }
+                                        lines.push(`----------------------------------------\n`);
+                                    });
+
+                                    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement("a");
+                                    a.href = url;
+                                    a.download = `线下剧本_${session.alias || character?.name || "对方"}_精选${selectedTurns.length}回合_${new Date().toISOString().slice(0, 10)}.txt`;
+                                    document.body.appendChild(a);
+                                    a.click();
+                                    document.body.removeChild(a);
+                                    URL.revokeObjectURL(url);
+                                    setOfflineExportRangeOpen(false);
+                                }}
+                            >
+                                导出勾选的 {selectedOfflineExportTurnIds.size} 回合 TXT
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Message List */}
             <div
                 ref={scrollRef}
@@ -5961,61 +6475,16 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                             setShowSettings(false);
                             jumpToStoredMessage(messageId);
                         }}
-                        onJumpToOfflineTurn={(turnId) => {
+                        onOpenOfflineSearchFloating={() => {
                             setShowSettings(false);
-                            // 1. 同步切入线下模式状态
                             if (!offlineMode) {
                                 setOfflineMode(true);
                                 kvSet(CHAT_OFFLINE_MODE_PREFIX + session.id, "1");
                             }
-                            // 2. 重新从存储中装载最新的线下历史并计算需要展开的容量
                             const allTurns = loadChatOfflineTurns(session.id);
                             setOfflineTurns(allTurns);
-                            const targetIdx = allTurns.findIndex(t => t.id === turnId);
-                            if (targetIdx !== -1) {
-                                const neededCount = allTurns.length - targetIdx + 8;
-                                setOfflineVisibleCount(prev => Math.max(prev, neededCount));
-                            }
-
-                            // 3. 强力多阶轮询与原生高精度定位
-                            let attempts = 0;
-                            const runScroll = () => {
-                                attempts += 1;
-                                const container = scrollRef.current;
-                                const el = document.getElementById(`offline-turn-${turnId}`) || (document.querySelector(`[data-offline-turn-id="${turnId}"]`) as HTMLElement | null);
-                                
-                                if (el && container) {
-                                    const containerRect = container.getBoundingClientRect();
-                                    const elRect = el.getBoundingClientRect();
-                                    const relativeTop = elRect.top - containerRect.top + container.scrollTop;
-                                    const targetScrollTop = relativeTop - (container.clientHeight / 2) + (elRect.height / 2);
-
-                                    container.scrollTo({
-                                        top: Math.max(0, targetScrollTop),
-                                        behavior: attempts <= 2 ? "auto" : "smooth",
-                                    });
-
-                                    el.style.transition = "box-shadow 0.3s ease, background 0.3s ease";
-                                    el.style.boxShadow = "0 0 0 3px #2563eb";
-                                    el.style.borderRadius = "12px";
-                                    el.style.background = "rgba(37, 99, 235, 0.12)";
-
-                                    setTimeout(() => {
-                                        if (el) {
-                                            el.style.boxShadow = "none";
-                                            el.style.background = "";
-                                        }
-                                    }, 2800);
-                                    return;
-                                }
-
-                                if (attempts < 12) {
-                                    setTimeout(runScroll, attempts < 4 ? 60 : 120);
-                                }
-                            };
-
-                            // 等待 React 在关闭 Settings 模态框并切到线下视图后立即执行定位
-                            setTimeout(runScroll, 60);
+                            setOfflineSearchFloatQuery("");
+                            setOfflineSearchFloatOpen(true);
                         }}
                         onToolHistoryCleared={syncMessagesFromStorage}
                         offlineHistoryBusy={isOfflineGenerating}
