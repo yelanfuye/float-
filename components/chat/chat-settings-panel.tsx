@@ -844,12 +844,8 @@ export function ChatSettingsPanel({
                     <button
                         className="menu-item"
                         onClick={() => {
-                            if (onOpenOfflineSearchFloating) {
-                                onClose();
-                                onOpenOfflineSearchFloating();
-                            } else {
-                                openOfflineSearchPanel();
-                            }
+                            onClose();
+                            onOpenOfflineSearchFloating?.();
                         }}
                     >
                         <ChatInfoIcon icon={Search} color={BINDING_ACCENTS.preset} />
