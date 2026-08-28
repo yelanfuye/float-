@@ -515,12 +515,14 @@ export function ChatSettingsPanel({
     const [offlineExportRangeOpen, setOfflineExportRangeOpen] = useState(false);
     const [selectedOfflineTurnIds, setSelectedOfflineTurnIds] = useState<Set<string>>(new Set());
     const [offlineExportFilterQuery, setOfflineExportFilterQuery] = useState("");
+    const [expandedTurnIds, setExpandedTurnIds] = useState<Set<string>>(new Set());
 
     const openOfflineSearchPanel = () => {
         const turns = loadChatOfflineTurns(session.id);
         setOfflineTurnsList(turns);
         setSelectedOfflineTurnIds(new Set(turns.map((_, i) => String(i))));
         setOfflineExportFilterQuery("");
+        setExpandedTurnIds(new Set());
         setShowOfflineSearch(true);
     };
 
@@ -1569,7 +1571,7 @@ export function ChatSettingsPanel({
             {showOfflineSearch && (
                 <div style={{ position: "absolute", inset: 0, zIndex: 9999, background: "#ffffff" }}>
                 <div style={{ position: "absolute", inset: 0, background: "var(--c-page-body-bg)" }}>
-                    <PageShell title="查找线下剧情与导出" onBack={() => setShowOfflineSearch(false)}>
+                    <PageShell title="查找线下剧情与导出" onBack={() => setShowOfflineSearch(false)} className="h-full flex flex-col">
                         <div className="flex flex-col h-full overflow-hidden">
                             <div className="px-4 pt-2 pb-3 flex items-center gap-2 shrink-0">
                                 <input
@@ -1665,47 +1667,70 @@ export function ChatSettingsPanel({
                                 })
                                 .map(({ turn, origIdx }) => {
                                     const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${origIdx + 1}`;
+                                    const isExpanded = expandedTurnIds.has(turn.id);
+                                    const previewText = turn.assistantContent || turn.userContent || turn.summary || "";
+
                                     return (
                                         <div
                                             key={turn.id || origIdx}
                                             role="button"
                                             tabIndex={0}
                                             onClick={() => {
-                                                if (onJumpToOfflineTurn) {
-                                                    onJumpToOfflineTurn(turn.id);
-                                                    setShowOfflineSearch(false);
-                                                    onClose();
-                                                }
+                                                setExpandedTurnIds(prev => {
+                                                    const next = new Set(prev);
+                                                    if (next.has(turn.id)) next.delete(turn.id);
+                                                    else next.add(turn.id);
+                                                    return next;
+                                                });
                                             }}
-                                            className="p-3.5 rounded-xl border border-[var(--c-border-light,#e2e8f0)] bg-[var(--c-card-bg,#fff)] flex flex-col gap-2 shadow-sm cursor-pointer hover:border-[var(--c-accent,#2563eb)] transition-colors"
+                                            className="p-3 rounded-xl border border-[var(--c-border-light,#e2e8f0)] bg-[var(--c-card-bg,#fff)] flex flex-col gap-2 shadow-sm cursor-pointer hover:border-[var(--c-accent,#2563eb)] transition-all select-none"
                                         >
-                                            <div className="flex items-center justify-between text-xs text-[var(--c-sub,#64748b)] pb-1.5 border-b border-[var(--c-line,#f1f5f9)]">
-                                                <span className="font-semibold text-[var(--c-text-title,#0f172a)]">
-                                                    第 {origIdx + 1} 回合 · {timeStr}
-                                                </span>
-                                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--c-input,#f8fafc)]">
-                                                    点击直达 ↗
+                                            {/* 默认摘要行：时间、日期、第几节/回合 */}
+                                            <div className="flex items-center justify-between text-xs">
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="font-bold text-[var(--c-text-title,#0f172a)]">
+                                                        第 {origIdx + 1} 回合
+                                                    </span>
+                                                    <span className="text-[11px] text-[var(--c-sub,#94a3b8)]">
+                                                        · {timeStr}
+                                                    </span>
+                                                </div>
+                                                <span className="text-[11px] font-medium text-[var(--c-accent,#2563eb)] flex items-center gap-0.5">
+                                                    {isExpanded ? "收起 ▲" : "展开详情 ▼"}
                                                 </span>
                                             </div>
 
-                                            {turn.userContent ? (
-                                                <div className="text-xs text-[var(--c-text,#334155)] leading-relaxed">
-                                                    <b className="text-[var(--c-accent,#2563eb)]">你的行动：</b> {turn.userContent}
+                                            {/* 折叠状态下的单行预览 */}
+                                            {!isExpanded && previewText && (
+                                                <div className="text-[11px] text-[var(--c-sub,#64748b)] truncate">
+                                                    {previewText.replace(/\s+/g, " ").slice(0, 36)}…
                                                 </div>
-                                            ) : null}
+                                            )}
 
-                                            {turn.assistantContent ? (
-                                                <div className="text-xs text-[var(--c-text,#1e293b)] leading-relaxed bg-[var(--c-input,#f8fafc)] p-2 rounded-lg">
-                                                    <b className="text-[var(--c-text-title,#0f172a)]">{characterName}的主要剧情：</b>
-                                                    <div className="mt-1 whitespace-pre-wrap">{turn.assistantContent}</div>
-                                                </div>
-                                            ) : null}
+                                            {/* 展开后的全量详细内容 */}
+                                            {isExpanded && (
+                                                <div className="flex flex-col gap-2 pt-2 border-t border-[var(--c-line,#f1f5f9)]" onClick={e => e.stopPropagation()}>
+                                                    {turn.userContent ? (
+                                                        <div className="text-xs text-[var(--c-text,#334155)] leading-relaxed">
+                                                            <b className="text-[var(--c-accent,#2563eb)]">你的行动：</b>
+                                                            <div className="mt-0.5 whitespace-pre-wrap">{turn.userContent}</div>
+                                                        </div>
+                                                    ) : null}
 
-                                            {turn.summary ? (
-                                                <div className="text-[11px] text-[var(--c-sub,#94a3b8)] italic">
-                                                    梗概：{turn.summary}
+                                                    {turn.assistantContent ? (
+                                                        <div className="text-xs text-[var(--c-text,#1e293b)] leading-relaxed bg-[var(--c-input,#f8fafc)] p-2.5 rounded-lg">
+                                                            <b className="text-[var(--c-text-title,#0f172a)]">{characterName}的主要剧情：</b>
+                                                            <div className="mt-1 whitespace-pre-wrap">{turn.assistantContent}</div>
+                                                        </div>
+                                                    ) : null}
+
+                                                    {turn.summary ? (
+                                                        <div className="text-[11px] text-[var(--c-sub,#94a3b8)] italic">
+                                                            梗概：{turn.summary}
+                                                        </div>
+                                                    ) : null}
                                                 </div>
-                                            ) : null}
+                                            )}
                                         </div>
                                     );
                                 })}
