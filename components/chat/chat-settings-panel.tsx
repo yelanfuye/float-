@@ -1570,83 +1570,84 @@ export function ChatSettingsPanel({
                 <div style={{ position: "absolute", inset: 0, zIndex: 9999, background: "#ffffff" }}>
                 <div style={{ position: "absolute", inset: 0, background: "var(--c-page-body-bg)" }}>
                     <PageShell title="查找线下剧情与导出" onBack={() => setShowOfflineSearch(false)}>
-                        <div className="px-4 pt-2 pb-3 flex items-center gap-2">
-                            <input
-                                autoFocus
-                                type="text"
-                                placeholder="搜索线下主要剧情、对白或你的行动..."
-                                value={offlineSearchQuery}
-                                onChange={e => setOfflineSearchQuery(e.target.value)}
-                                className="ui-input flex-1 min-w-0"
-                            />
-                            {offlineSearchQuery && (
+                        <div className="flex flex-col h-full overflow-hidden">
+                            <div className="px-4 pt-2 pb-3 flex items-center gap-2 shrink-0">
+                                <input
+                                    autoFocus
+                                    type="text"
+                                    placeholder="搜索线下主要剧情、对白或你的行动..."
+                                    value={offlineSearchQuery}
+                                    onChange={e => setOfflineSearchQuery(e.target.value)}
+                                    className="ui-input flex-1 min-w-0"
+                                />
+                                {offlineSearchQuery && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setOfflineSearchQuery("")}
+                                        className="h-10 w-10 shrink-0 grid place-items-center border-0 bg-transparent text-[var(--c-icon)]"
+                                    >
+                                        <X size={18} />
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* 导出工具栏 */}
+                            <div className="px-4 pb-3 flex gap-2 shrink-0">
                                 <button
                                     type="button"
-                                    onClick={() => setOfflineSearchQuery("")}
-                                    className="h-10 w-10 shrink-0 grid place-items-center border-0 bg-transparent text-[var(--c-icon)]"
+                                    className="ui-btn ui-btn-primary flex-1 text-xs"
+                                    onClick={() => {
+                                        if (offlineTurnsList.length === 0) {
+                                            alert("当前暂无线下剧情记录");
+                                            return;
+                                        }
+                                        const lines: string[] = [];
+                                        lines.push(`========================================`);
+                                        lines.push(` 线下模式 · 与「${characterName}」完整剧本`);
+                                        lines.push(` 导出时间：${new Date().toLocaleString("zh-CN")}`);
+                                        lines.push(` 共 ${offlineTurnsList.length} 个线下回合`);
+                                        lines.push(`========================================\n`);
+
+                                        offlineTurnsList.forEach((turn, idx) => {
+                                            const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${idx+1}`;
+                                            lines.push(`【第 ${idx + 1} 回合 · ${timeStr}】`);
+                                            if (turn.userContent) {
+                                                lines.push(`【你的行动与发言】:\n${turn.userContent}\n`);
+                                            }
+                                            if (turn.assistantContent) {
+                                                lines.push(`【${characterName}的主要剧情展开】:\n${turn.assistantContent}\n`);
+                                            }
+                                            if (turn.summary) {
+                                                lines.push(`[剧情梗概]: ${turn.summary}\n`);
+                                            }
+                                            lines.push(`----------------------------------------\n`);
+                                        });
+
+                                        const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+                                        const url = URL.createObjectURL(blob);
+                                        const a = document.createElement("a");
+                                        a.href = url;
+                                        a.download = `线下剧本_${characterName}_全本_${new Date().toISOString().slice(0, 10)}.txt`;
+                                        document.body.appendChild(a);
+                                        a.click();
+                                        document.body.removeChild(a);
+                                        URL.revokeObjectURL(url);
+                                    }}
                                 >
-                                    <X size={18} />
+                                    📥 导出全部线下剧本 TXT
                                 </button>
-                            )}
-                        </div>
 
-                        {/* 导出工具栏 */}
-                        <div className="px-4 pb-3 flex gap-2">
-                            <button
-                                type="button"
-                                className="ui-btn ui-btn-primary flex-1 text-xs"
-                                onClick={() => {
-                                    if (offlineTurnsList.length === 0) {
-                                        alert("当前暂无线下剧情记录");
-                                        return;
-                                    }
-                                    const lines: string[] = [];
-                                    lines.push(`========================================`);
-                                    lines.push(` 线下模式 · 与「${characterName}」完整剧本`);
-                                    lines.push(` 导出时间：${new Date().toLocaleString("zh-CN")}`);
-                                    lines.push(` 共 ${offlineTurnsList.length} 个线下回合`);
-                                    lines.push(`========================================\n`);
+                                <button
+                                    type="button"
+                                    className="ui-btn ui-btn-outline flex-1 text-xs"
+                                    onClick={() => setOfflineExportRangeOpen(true)}
+                                >
+                                    📑 选段导出 TXT
+                                </button>
+                            </div>
 
-                                    offlineTurnsList.forEach((turn, idx) => {
-                                        const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${idx+1}`;
-                                        lines.push(`【第 ${idx + 1} 回合 · ${timeStr}】`);
-                                        if (turn.userContent) {
-                                            lines.push(`【你的行动与发言】:\n${turn.userContent}\n`);
-                                        }
-                                        if (turn.assistantContent) {
-                                            lines.push(`【${characterName}的主要剧情展开】:\n${turn.assistantContent}\n`);
-                                        }
-                                        if (turn.summary) {
-                                            lines.push(`[剧情梗概]: ${turn.summary}\n`);
-                                        }
-                                        lines.push(`----------------------------------------\n`);
-                                    });
-
-                                    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
-                                    const url = URL.createObjectURL(blob);
-                                    const a = document.createElement("a");
-                                    a.href = url;
-                                    a.download = `线下剧本_${characterName}_全本_${new Date().toISOString().slice(0, 10)}.txt`;
-                                    document.body.appendChild(a);
-                                    a.click();
-                                    document.body.removeChild(a);
-                                    URL.revokeObjectURL(url);
-                                }}
-                            >
-                                📥 导出全部线下剧本 TXT
-                            </button>
-
-                            <button
-                                type="button"
-                                className="ui-btn ui-btn-outline flex-1 text-xs"
-                                onClick={() => setOfflineExportRangeOpen(true)}
-                            >
-                                📑 选段导出 TXT
-                            </button>
-                        </div>
-
-                        {/* 搜索与内容列表 */}
-                        <div className="flex flex-col gap-3 px-4 pb-6 overflow-y-auto flex-1">
+                            {/* 搜索与内容列表 */}
+                            <div className="flex flex-col gap-3 px-4 pb-6 overflow-y-auto flex-1 min-h-0">
                             {offlineTurnsList.length === 0 ? (
                                 <div className="ui-empty py-10">
                                     <span className="menu-desc">当前会话暂无线下剧情记录</span>
@@ -1710,43 +1711,51 @@ export function ChatSettingsPanel({
                                 })}
                         </div>
 
-                        {/* 自由勾选选段导出弹窗 */}
+                        {/* 自由勾选选段导出弹窗（与剧情模式 story 一致的绝对定位与结构） */}
                         {offlineExportRangeOpen && (
-                            <div className="modal-overlay" style={{ zIndex: 10050, padding: "16px" }} onClick={() => setOfflineExportRangeOpen(false)}>
-                                <div
-                                    className="modal-dialog"
-                                    style={{
-                                        width: "100%",
-                                        maxWidth: 340,
-                                        maxHeight: "72vh",
-                                        display: "flex",
-                                        flexDirection: "column",
-                                        gap: 8,
-                                        padding: "14px 12px",
-                                        boxSizing: "border-box",
-                                    }}
-                                    onClick={e => e.stopPropagation()}
-                                >
-                                    <div className="ts-15 font-semibold text-center text-[var(--c-text)]">
-                                        📑 自由勾选与导出线下剧本 TXT
+                            <div style={{
+                                position: "fixed", inset: 0, zIndex: 10050,
+                                background: "rgba(0,0,0,0.6)", backdropFilter: "blur(6px)",
+                                display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+                            }} onClick={() => setOfflineExportRangeOpen(false)}>
+                                <div style={{
+                                    background: "var(--c-page-body-bg, #ffffff)",
+                                    borderRadius: 18,
+                                    width: "100%",
+                                    maxWidth: 340,
+                                    maxHeight: "72vh",
+                                    padding: "14px 12px",
+                                    boxShadow: "0 16px 40px rgba(0,0,0,0.3)",
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: 8,
+                                    boxSizing: "border-box",
+                                }} onClick={e => e.stopPropagation()}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                        <span style={{ fontSize: 15, fontWeight: 700, color: "var(--c-text, #1e293b)" }}>
+                                            📑 自由勾选与导出线下剧本 TXT
+                                        </span>
+                                        <button onClick={() => setOfflineExportRangeOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-sub, #94a3b8)", fontSize: 16 }}>
+                                            ✕
+                                        </button>
                                     </div>
 
                                     {/* 顶栏全选控制 */}
-                                    <div className="flex items-center justify-between p-2 rounded-lg bg-[var(--c-input,#f1f5f9)] text-xs">
-                                        <span className="text-[var(--c-sub)]">
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "color-mix(in srgb, var(--c-text) 5%, transparent)", padding: "6px 8px", borderRadius: 8 }}>
+                                        <span style={{ fontSize: 12, color: "var(--c-text, #475569)" }}>
                                             已选 <b>{selectedOfflineTurnIds.size}</b> / {offlineTurnsList.length} 回合
                                         </span>
-                                        <div className="flex gap-1.5">
+                                        <div style={{ display: "flex", gap: 6 }}>
                                             <button
                                                 type="button"
-                                                className="px-2 py-1 bg-[var(--c-card-bg,#fff)] border border-[var(--c-border-light,#cbd5e1)] rounded text-xs"
+                                                style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, border: "1px solid var(--c-border-light, rgba(0,0,0,0.12))", background: "var(--c-card-bg, #fff)", color: "var(--c-text, #334155)", cursor: "pointer" }}
                                                 onClick={() => setSelectedOfflineTurnIds(new Set(offlineTurnsList.map((_, i) => String(i))))}
                                             >
                                                 全选
                                             </button>
                                             <button
                                                 type="button"
-                                                className="px-2 py-1 bg-[var(--c-card-bg,#fff)] border border-[var(--c-border-light,#cbd5e1)] rounded text-xs"
+                                                style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, border: "1px solid var(--c-border-light, rgba(0,0,0,0.12))", background: "var(--c-card-bg, #fff)", color: "var(--c-text, #334155)", cursor: "pointer" }}
                                                 onClick={() => setSelectedOfflineTurnIds(new Set())}
                                             >
                                                 清空
@@ -1760,14 +1769,28 @@ export function ChatSettingsPanel({
                                         value={offlineExportFilterQuery}
                                         onChange={e => setOfflineExportFilterQuery(e.target.value)}
                                         placeholder="过滤关键词以便快速勾选…"
-                                        className="ui-input text-xs w-full"
-                                        style={{ padding: "6px 10px" }}
+                                        style={{
+                                            width: "100%", boxSizing: "border-box",
+                                            padding: "6px 10px", borderRadius: 6,
+                                            border: "1px solid var(--c-border-light, rgba(0,0,0,0.12))",
+                                            background: "var(--c-input, #f8fafc)",
+                                            fontSize: 12,
+                                            outline: "none",
+                                        }}
                                     />
 
                                     {/* 回合列表 */}
-                                    <div className="flex-1 overflow-y-auto flex flex-col gap-2 max-h-[280px] pr-1">
+                                    <div style={{
+                                        flex: 1,
+                                        maxHeight: 280,
+                                        overflowY: "auto",
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        gap: 6,
+                                        paddingRight: 2,
+                                    }}>
                                         {offlineTurnsList.length === 0 ? (
-                                            <div className="text-center py-6 text-xs text-[var(--c-sub)]">暂无线下记录</div>
+                                            <div style={{ padding: "20px 0", textAlign: "center", fontSize: 12, color: "var(--c-sub, #94a3b8)" }}>暂无线下记录</div>
                                         ) : null}
 
                                         {offlineTurnsList
@@ -1782,15 +1805,20 @@ export function ChatSettingsPanel({
                                             .map(({ turn, origIdx }) => {
                                                 const isChecked = selectedOfflineTurnIds.has(String(origIdx));
                                                 const timeStr = turn.createdAt ? new Date(turn.createdAt).toLocaleString("zh-CN") : `回合 #${origIdx + 1}`;
-                                                const preview = turn.assistantContent || turn.userContent || turn.summary || "";
+                                                const preview = (turn.assistantContent || turn.userContent || turn.summary || "").slice(0, 48);
 
                                                 return (
                                                     <label
                                                         key={turn.id || origIdx}
-                                                        className="flex items-start gap-2.5 p-2 rounded-lg border text-xs cursor-pointer"
                                                         style={{
-                                                            background: isChecked ? "rgba(37, 99, 235, 0.08)" : "var(--c-card-bg, #fff)",
-                                                            borderColor: isChecked ? "rgba(37, 99, 235, 0.4)" : "var(--c-border-light, #e2e8f0)",
+                                                            display: "flex",
+                                                            alignItems: "flex-start",
+                                                            gap: 8,
+                                                            padding: "7px 9px",
+                                                            borderRadius: 8,
+                                                            background: isChecked ? "rgba(37, 99, 235, 0.08)" : "color-mix(in srgb, var(--c-text) 2%, transparent)",
+                                                            border: isChecked ? "1px solid rgba(37, 99, 235, 0.4)" : "1px solid var(--c-border-light, rgba(0,0,0,0.06))",
+                                                            cursor: "pointer",
                                                         }}
                                                     >
                                                         <input
@@ -1802,19 +1830,19 @@ export function ChatSettingsPanel({
                                                                 else next.delete(String(origIdx));
                                                                 setSelectedOfflineTurnIds(next);
                                                             }}
-                                                            className="mt-0.5"
+                                                            style={{ marginTop: 2, accentColor: "#2563eb" }}
                                                         />
-                                                        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                                                            <div className="flex items-center justify-between">
-                                                                <span className="font-semibold text-[var(--c-text-title,#0f172a)]">
+                                                        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                                                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                                                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--c-text, #1e293b)" }}>
                                                                     第 {origIdx + 1} 回合
                                                                 </span>
-                                                                <span className="text-[10px] text-[var(--c-sub,#94a3b8)]">
+                                                                <span style={{ fontSize: 10, color: "var(--c-sub, #94a3b8)" }}>
                                                                     {timeStr}
                                                                 </span>
                                                             </div>
-                                                            <span className="text-[var(--c-sub,#64748b)] truncate">
-                                                                {preview.slice(0, 42)}…
+                                                            <span style={{ fontSize: 11, color: "var(--c-sub, #64748b)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                                {preview}…
                                                             </span>
                                                         </div>
                                                     </label>
@@ -1823,17 +1851,37 @@ export function ChatSettingsPanel({
                                     </div>
 
                                     {/* 底部按钮 */}
-                                    <div className="flex gap-2 w-full mt-2">
+                                    <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                                         <button
                                             type="button"
-                                            className="ui-btn ui-btn-ghost flex-1"
+                                            style={{
+                                                flex: 1,
+                                                padding: "9px 0",
+                                                borderRadius: 8,
+                                                border: "1px solid var(--c-border-light, rgba(0,0,0,0.1))",
+                                                background: "color-mix(in srgb, var(--c-text) 4%, transparent)",
+                                                color: "var(--c-text, #475569)",
+                                                fontSize: 12,
+                                                fontWeight: 600,
+                                                cursor: "pointer",
+                                            }}
                                             onClick={() => setOfflineExportRangeOpen(false)}
                                         >
                                             取消
                                         </button>
                                         <button
                                             type="button"
-                                            className="ui-btn ui-btn-primary flex-1"
+                                            style={{
+                                                flex: 1.4,
+                                                padding: "9px 0",
+                                                borderRadius: 8,
+                                                border: "none",
+                                                background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
+                                                color: "#fff",
+                                                fontSize: 12,
+                                                fontWeight: 600,
+                                                cursor: "pointer",
+                                            }}
                                             onClick={() => {
                                                 if (selectedOfflineTurnIds.size === 0) {
                                                     alert("请先勾选需要导出的线下回合");
