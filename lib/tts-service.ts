@@ -185,17 +185,31 @@ async function synthesizeOpenAI(text: string, config: VoiceApiConfig): Promise<B
 
 // ── ElevenLabs TTS ──────────────────────────────────
 
+function normalizeElevenLabsApiKey(value: string): string {
+    return value.trim()
+        .replace(/^Bearer\s+/i, "")
+        .replace(/^xi-api-key\s*:\s*/i, "")
+        .replace(/^['\"]|['\"]$/g, "")
+        .trim();
+}
+
+function normalizeElevenLabsBaseUrl(value: string | undefined): string {
+    const raw = (value || "https://api.elevenlabs.io/v1").trim().replace(/\/$/, "");
+    return /^https:\/\/api\.elevenlabs\.io$/i.test(raw) ? `${raw}/v1` : raw;
+}
+
 async function synthesizeElevenLabs(text: string, config: VoiceApiConfig): Promise<Blob | null> {
-    if (!config.apiKey) throw new Error("ElevenLabs API Key 未配置");
+    const apiKey = normalizeElevenLabsApiKey(config.apiKey);
+    if (!apiKey) throw new Error("ElevenLabs API Key 未配置");
 
     const voiceId = config.defaultVoice || "21m00Tcm4TlvDq8ikWAM";
     const modelId = config.model || "eleven_multilingual_v2";
-    const baseUrl = (config.baseUrl || "https://api.elevenlabs.io/v1").replace(/\/$/, "");
+    const baseUrl = normalizeElevenLabsBaseUrl(config.baseUrl);
 
     const response = await fetchWithTimeout(`${baseUrl}/text-to-speech/${voiceId}`, {
         method: "POST",
         headers: {
-            "xi-api-key": config.apiKey,
+            "xi-api-key": apiKey,
             "Content-Type": "application/json",
             "Accept": "audio/mpeg",
         },
@@ -214,7 +228,11 @@ async function synthesizeElevenLabs(text: string, config: VoiceApiConfig): Promi
 
     if (!response.ok) {
         const errText = await response.text().catch(() => "");
-        throw new Error(`ElevenLabs TTS 请求失败 (${response.status}): ${errText}`);
+        const detail = errText.trim();
+        if (response.status === 401) {
+            throw new Error(`ElevenLabs API Key 未通过鉴权 (401)：${detail || "请确认使用的是 ElevenLabs API Key，而不是其他服务的密钥"}`);
+        }
+        throw new Error(`ElevenLabs TTS 请求失败 (${response.status}): ${detail}`);
     }
 
     const blob = await response.blob();

@@ -8,7 +8,18 @@ const DEFAULT_BASE_URL = "https://api.elevenlabs.io/v1";
 
 function normalizeBaseUrl(value: unknown): string {
     const raw = typeof value === "string" && value.trim() ? value.trim() : DEFAULT_BASE_URL;
-    return raw.replace(/\/$/, "");
+    const normalized = raw.replace(/\/$/, "");
+    if (/^https:\/\/api\.elevenlabs\.io$/i.test(normalized)) return `${normalized}/v1`;
+    return normalized;
+}
+
+function normalizeApiKey(value: unknown): string {
+    if (typeof value !== "string") return "";
+    return value.trim()
+        .replace(/^Bearer\s+/i, "")
+        .replace(/^xi-api-key\s*:\s*/i, "")
+        .replace(/^['\"]|['\"]$/g, "")
+        .trim();
 }
 
 function getRecord(value: unknown): Record<string, unknown> {
@@ -18,13 +29,16 @@ function getRecord(value: unknown): Record<string, unknown> {
 export async function POST(request: Request) {
     try {
         const body = await request.json().catch(() => ({}));
-        const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+        const apiKey = normalizeApiKey(body.apiKey);
         const baseUrl = normalizeBaseUrl(body.baseUrl);
         if (!apiKey) return NextResponse.json({ error: "missing_api_key" }, { status: 400 });
 
         const response = await proxyFetch(`${baseUrl}/models`, {
             method: "GET",
-            headers: { "xi-api-key": apiKey, Accept: "application/json" },
+            headers: {
+                "xi-api-key": apiKey,
+                Accept: "application/json",
+            },
         });
         const text = await response.text();
         let payload: unknown;
@@ -39,7 +53,8 @@ export async function POST(request: Request) {
             return NextResponse.json({
                 error: "get_models_failed",
                 message: String(detail.message || record.message || text || `HTTP ${response.status}`).slice(0, 500),
-            }, { status: 502 });
+                upstreamStatus: response.status,
+            }, { status: response.status === 401 ? 401 : 502 });
         }
 
         const models = Array.isArray(payload) ? payload : [];
