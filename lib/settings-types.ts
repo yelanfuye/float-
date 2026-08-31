@@ -142,6 +142,14 @@ export type VoiceApiConfig = {
     speechSpeed?: number;
     /** Minimax voice_setting.pitch（半音，±12）。缺省保持旧行为（0，原声）。 */
     speechPitch?: number;
+    /** ElevenLabs voice_settings.stability (0..1). */
+    elevenStability?: number;
+    /** ElevenLabs voice_settings.similarity_boost (0..1). */
+    elevenSimilarityBoost?: number;
+    /** ElevenLabs voice_settings.style (0..1). */
+    elevenStyle?: number;
+    /** ElevenLabs voice_settings.use_speaker_boost. */
+    elevenSpeakerBoost?: boolean;
     customVoices?: { id: string; name: string; createdAt?: number }[];
     enableSTT: boolean;
     enableTTS: boolean;

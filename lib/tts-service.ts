@@ -83,6 +83,11 @@ const MINIMAX_SPEED_MAX = 2.0;
 const MINIMAX_PITCH_MIN = -12;
 const MINIMAX_PITCH_MAX = 12;
 
+function clampUnit(value: number | undefined, fallback: number): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+    return Math.min(1, Math.max(0, value));
+}
+
 function normalizeMinimaxSpeed(speed: number | undefined): number {
     if (typeof speed !== "number" || !Number.isFinite(speed)) return 1.0;
     return Math.min(MINIMAX_SPEED_MAX, Math.max(MINIMAX_SPEED_MIN, speed));
@@ -198,9 +203,11 @@ async function synthesizeElevenLabs(text: string, config: VoiceApiConfig): Promi
             text,
             model_id: modelId,
             voice_settings: {
-                stability: 0.5,
-                similarity_boost: 0.75,
-                speed: config.speechSpeed ?? 1.0,
+                stability: clampUnit(config.elevenStability, 0.5),
+                similarity_boost: clampUnit(config.elevenSimilarityBoost, 0.75),
+                style: clampUnit(config.elevenStyle, 0),
+                use_speaker_boost: config.elevenSpeakerBoost ?? true,
+                speed: Math.min(1.2, Math.max(0.7, config.speechSpeed ?? 1.0)),
             },
         }),
     });
