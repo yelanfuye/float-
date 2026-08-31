@@ -16,6 +16,7 @@ function normalizeBaseUrl(value: unknown): string {
 function normalizeApiKey(value: unknown): string {
     if (typeof value !== "string") return "";
     return value.trim()
+        .replace(/^['\"]|['\"]$/g, "")
         .replace(/^Bearer\s+/i, "")
         .replace(/^xi-api-key\s*:\s*/i, "")
         .replace(/^['\"]|['\"]$/g, "")

@@ -182,6 +182,7 @@ const DEFAULT_ELEVENLABS_VOICES = [
 ];
 
 const DEFAULT_ELEVENLABS_MODELS = [
+    { id: "eleven_v3", name: "Eleven v3（情绪/音频标签）" },
     { id: "eleven_multilingual_v2", name: "Eleven Multilingual v2" },
     { id: "eleven_turbo_v2_5", name: "Eleven Turbo v2.5" },
     { id: "eleven_flash_v2_5", name: "Eleven Flash v2.5" },
@@ -815,7 +816,13 @@ export function VoiceSettings() {
 
                                         {config.provider === "ElevenLabs" && (
                                             <>
-                                                {([
+                                                {config.model?.toLowerCase() === "eleven_v3" ? (
+                                                    <div className="menu-desc ml-1">
+                                                        Eleven v3 使用文本中的音频标签控制情绪和表达，例如 [happy]、[sad]、[whispering]；v3 不发送旧版 voice_settings 参数。
+                                                    </div>
+                                                ) : (
+                                                    <>
+                                                    {([
                                                     ["elevenStability", "稳定性 (Stability)", config.elevenStability ?? 0.5, "控制表达变化，越高越稳定"],
                                                     ["elevenSimilarityBoost", "相似度 (Similarity)", config.elevenSimilarityBoost ?? 0.75, "控制音色与原始声音的相似程度"],
                                                     ["elevenStyle", "风格夸张 (Style)", config.elevenStyle ?? 0, "增加风格表现，过高可能降低稳定性"],
@@ -858,6 +865,8 @@ export function VoiceSettings() {
                                                         aria-label="ElevenLabs 语速"
                                                     />
                                                 </div>
+                                                    </>
+                                                )}
                                             </>
                                         )}
 

@@ -187,6 +187,7 @@ async function synthesizeOpenAI(text: string, config: VoiceApiConfig): Promise<B
 
 function normalizeElevenLabsApiKey(value: string): string {
     return value.trim()
+        .replace(/^['\"]|['\"]$/g, "")
         .replace(/^Bearer\s+/i, "")
         .replace(/^xi-api-key\s*:\s*/i, "")
         .replace(/^['\"]|['\"]$/g, "")
@@ -206,37 +207,50 @@ async function synthesizeElevenLabs(text: string, config: VoiceApiConfig): Promi
     const modelId = config.model || "eleven_multilingual_v2";
     const baseUrl = normalizeElevenLabsBaseUrl(config.baseUrl);
 
-    const response = await fetchWithTimeout(`${baseUrl}/text-to-speech/${voiceId}`, {
+    const isElevenV3 = modelId.toLowerCase() === "eleven_v3";
+    const requestBody: Record<string, unknown> = {
+        text,
+        model_id: modelId,
+    };
+    // eleven_v3 uses audio tags/emotional delivery and rejects legacy voice_settings fields.
+    if (!isElevenV3) {
+        requestBody.voice_settings = {
+            stability: clampUnit(config.elevenStability, 0.5),
+            similarity_boost: clampUnit(config.elevenSimilarityBoost, 0.75),
+            style: clampUnit(config.elevenStyle, 0),
+            use_speaker_boost: config.elevenSpeakerBoost ?? true,
+            speed: Math.min(1.2, Math.max(0.7, config.speechSpeed ?? 1.0)),
+        };
+    }
+
+    const response = await fetchWithTimeout("/api/voice/elevenlabs-tts", {
         method: "POST",
-        headers: {
-            "xi-api-key": apiKey,
-            "Content-Type": "application/json",
-            "Accept": "audio/mpeg",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-            text,
-            model_id: modelId,
-            voice_settings: {
-                stability: clampUnit(config.elevenStability, 0.5),
-                similarity_boost: clampUnit(config.elevenSimilarityBoost, 0.75),
-                style: clampUnit(config.elevenStyle, 0),
-                use_speaker_boost: config.elevenSpeakerBoost ?? true,
-                speed: Math.min(1.2, Math.max(0.7, config.speechSpeed ?? 1.0)),
-            },
+            apiKey,
+            baseUrl,
+            voiceId,
+            payload: requestBody,
         }),
     });
 
     if (!response.ok) {
         const errText = await response.text().catch(() => "");
-        const detail = errText.trim();
+        let detail = errText.trim();
+        try {
+            const payload = JSON.parse(errText) as Record<string, unknown>;
+            detail = String(payload.message || payload.error || detail);
+        } catch {
+            // Keep the raw response when the proxy does not return JSON.
+        }
         if (response.status === 401) {
             throw new Error(`ElevenLabs API Key 未通过鉴权 (401)：${detail || "请确认使用的是 ElevenLabs API Key，而不是其他服务的密钥"}`);
         }
-        throw new Error(`ElevenLabs TTS 请求失败 (${response.status}): ${detail}`);
+        throw new Error(`ElevenLabs TTS 请求失败 (${response.status})：${detail || "上游未提供错误详情"}`);
     }
 
     const blob = await response.blob();
-    return new Blob([await blob.arrayBuffer()], { type: "audio/mpeg" });
+    return new Blob([await blob.arrayBuffer()], { type: blob.type || "audio/mpeg" });
 }
 
 // ── iOS audio playback that coexists with speech recognition ──────────
