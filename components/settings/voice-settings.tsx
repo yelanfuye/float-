@@ -271,6 +271,13 @@ export function VoiceSettings() {
     const [manualVoiceIds, setManualVoiceIds] = useState<Record<string, boolean>>({});
     const [isLoaded, setIsLoaded] = useState(false);
     const audioRef = useRef<HTMLAudioElement | null>(null);
+    const modelInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+    const enterManualModel = (id: string) => {
+        setManualModelIds(prev => ({ ...prev, [id]: true }));
+        // Native select menus close asynchronously on mobile; focus after the input mounts.
+        window.setTimeout(() => modelInputRefs.current[id]?.focus(), 0);
+    };
 
     // Fetching states for Voices
     const [isFetching, setIsFetching] = useState<Record<string, boolean>>({});
@@ -546,19 +553,19 @@ export function VoiceSettings() {
                 setFetchedVoices(prev => ({ ...prev, [config.id]: DEFAULT_OPENAI_VOICES }));
             } else if (config.provider === "ElevenLabs") {
                 if (!config.apiKey.trim()) throw new Error("填写 API Key 后可同步 ElevenLabs 模型列表");
-                const base = (config.baseUrl || "https://api.elevenlabs.io/v1").replace(/\/$/, "");
-                const response = await fetch(`${base}/models`, {
-                    headers: { "xi-api-key": config.apiKey.trim(), Accept: "application/json" },
+                const response = await fetch("/api/voice/elevenlabs-models", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        apiKey: config.apiKey,
+                        baseUrl: config.baseUrl || "https://api.elevenlabs.io/v1",
+                    }),
                 });
                 const data = await response.json().catch(() => ({}));
                 if (!response.ok) {
-                    throw new Error(data.detail?.message || data.detail || data.message || `同步模型失败 (${response.status})`);
+                    throw new Error(data.message || data.error || `同步模型失败 (${response.status})`);
                 }
-                const models = Array.isArray(data) ? data : [];
-                const nextModels = uniqueOptions(models.map((model: Record<string, unknown>) => ({
-                    id: String(model.model_id || model.id || ""),
-                    name: String(model.name || model.model_id || model.id || ""),
-                })));
+                const nextModels = uniqueOptions(Array.isArray(data.models) ? data.models as VoiceOption[] : []);
                 if (nextModels.length === 0) throw new Error("接口未返回可用模型");
                 setFetchedModels(prev => ({ ...prev, [config.id]: nextModels }));
             } else {
@@ -759,6 +766,9 @@ export function VoiceSettings() {
                                                                 value={config.model || ""}
                                                                 onChange={(e) => updateConfig(config.id, { model: e.target.value })}
                                                                 placeholder="手动输入模型 ID"
+                                                                inputMode="text"
+                                                                autoFocus
+                                                                ref={(element) => { modelInputRefs.current[config.id] = element; }}
                                                                 className="flex-1"
                                                             />
                                                             <button
@@ -776,7 +786,7 @@ export function VoiceSettings() {
                                                             value={modelOptionsForConfig(config, fetchedModels).some(model => model.id === config.model) ? config.model : "__manual__"}
                                                             onChange={(e) => {
                                                                 if (e.target.value === "__manual__") {
-                                                                    setManualModelIds(prev => ({ ...prev, [config.id]: true }));
+                                                                    enterManualModel(config.id);
                                                                     return;
                                                                 }
                                                                 updateConfig(config.id, { model: e.target.value });
