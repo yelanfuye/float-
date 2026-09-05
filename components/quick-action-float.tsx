@@ -389,10 +389,19 @@ export function QuickActionFloat() {
 
                     {apiEditor && (
                         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12, overflowY: "auto", maxHeight: "65vh" }}>
-                            <button type="button" className="ui-btn" onClick={() => { cancelModelRequest(); setApiEditor(null); }}>← 返回，不保存</button>
+                            <button
+                                type="button"
+                                onClick={() => { cancelModelRequest(); setApiEditor(null); }}
+                                style={{ padding: "10px 16px", minHeight: 42, borderRadius: 10, background: "rgba(255,255,255,.82)", color: "#36563b", border: "2px solid #6f8f68", boxShadow: "0 2px 6px rgba(54,86,59,.18)", fontWeight: 700, cursor: "pointer" }}
+                            >← 返回，不保存</button>
                             <strong>{apiConfigs.find(api => api.id === apiEditor.id)?.name || "API 模型设置"}</strong>
                             <small>应用范围：{apiEditor.scope === "global" ? "全局默认" : characters.find(c => c.id === apiEditor.characterId)?.name || "角色默认"}。修改模型会影响所有使用此 API 配置的地方；应用级单独绑定仍优先。</small>
-                            <button type="button" className="ui-btn" disabled={modelsBusy} onClick={() => void fetchEditorModels()}>{modelsBusy ? "正在拉取模型…" : "拉取模型列表"}</button>
+                            <button
+                                type="button"
+                                disabled={modelsBusy}
+                                onClick={() => void fetchEditorModels()}
+                                style={{ padding: "10px 16px", minHeight: 42, borderRadius: 10, background: "rgba(255,255,255,.82)", color: "#36563b", border: "2px solid #6f8f68", boxShadow: "0 2px 6px rgba(54,86,59,.18)", fontWeight: 700, cursor: modelsBusy ? "wait" : "pointer", opacity: modelsBusy ? .65 : 1 }}
+                            >{modelsBusy ? "正在拉取模型…" : "拉取模型列表"}</button>
                             {modelChoices.length > 0 && <select aria-label="模型列表" className="ui-select" value={apiEditor.model} onChange={event => setApiEditor({ ...apiEditor, model: event.target.value })}>
                                 {!modelChoices.includes(apiEditor.model) && <option value={apiEditor.model}>{apiEditor.model || "请选择模型"}</option>}
                                 {modelChoices.map(model => <option key={model} value={model}>{model}</option>)}

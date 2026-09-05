@@ -635,8 +635,8 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
                     "日常态度参考：[conversational tone] 自然交谈、[casual] 随意、[lighthearted] 轻松、[playfully] 玩笑、[cheeky] 俏皮、[happily] 开心、[hesitant] 犹豫、[questioning] 疑问、[reflective] 思索、[understated] 克制、[matter-of-fact] 平实陈述。",
                     "明确情境才使用：[annoyed] 不悦、[frustrated] 挫败、[flustered] 慌乱、[nervous] 紧张、[regretful] 后悔、[resigned tone] 无奈、[sad] 难过、[wistful] 怅惘、[surprised] 惊讶、[excited] 兴奋、[angry] 生气、[sarcastic tone] 讽刺、[tired] 疲惫。不要凭空添加情绪，不把开心一律写成激动。",
                     "节奏与轻微动作参考：[continues softly] 轻声继续、[slows down] 放慢、[hesitant] 迟疑、[soft chuckle] 轻笑、[sighs] 叹气、[sigh of relief] 松口气、[whispers] 耳语。轻声与耳语可能降低听感音量，不得作为默认自然化方式。不要靠重复喘息、笑声、清嗓或拟声词堆砌活人感。",
-                    "同一段台词可以在实际语气变化的位置穿插不同标签，也可以连续几句不标；标签放在对应台词之前或自然停顿处，不拆开一个词，不连续堆多个矛盾指令。未标记的下一句不一定会自动重置语气。示例（仅演示结构，不照抄）：[语音条:[surprised] 你已经到啦？我还以为要再等一会儿。[playfully] 好，那这次算你赢。]。",
-                    "不要每句必加标签。保持选定音色与人物身份，不主动使用口音、年龄、deep voice、robotic tone、pirate voice 或 x accent 等声线改变指令；不使用 cuts in、overlapping 等模拟多人音轨。默认不用喊叫、强烈戏剧表演。使用正常标点组织节奏，不使用 SSML，不承诺标签能精确控制停顿时长。标签只允许简短英文、空格、逗号、连字符或单引号，不嵌套标签。", 
+                    "同一段台词可以在实际语气变化的位置穿插不同标签，也可以连续几句不标；标签放在对应句子之前或自然停顿处。每一句最多使用两个音频标签，通常一个就够；禁止在一句话前扎堆放三个或更多标签。每个标签必须独立使用一对完整英文中括号，例如 [a] [b]，不得合并、嵌套或漏掉括号。不要把标签连续堆在整段开头；需要改变语气时再放到对应句子前。未标记的下一句不一定会自动重置语气。示例（仅演示结构，不照抄）：[语音条:[surprised] 你已经到啦？我还以为要再等一会儿。[playfully] 好，那这次算你赢。]。", 
+                    "不要每句必加标签。保持选定音色与人物身份，不主动使用口音、年龄、deep voice、robotic tone、pirate voice 或 x accent 等声线改变指令；不使用 cuts in、overlapping 等模拟多人音轨。默认不用喊叫、强烈戏剧表演。使用正常标点组织节奏，不使用 SSML，不承诺标签能精确控制停顿时长。标签只允许简短英文、空格、逗号、连字符或单引号，不嵌套标签。生成前自行检查：每个句子的标签数量不超过 2 个，并确认每个标签都是独立的 [完整内容] 结构。", 
                     inCall
                         ? "当前为通话：按原协议输出说话正文，将必要标签直接放在对应台词中，不额外包裹语音条，不朗读动作说明或内心旁白。"
                         : "普通文字消息不要加音频标签。只有发送语音时，在[语音条:台词]内部写台词和必要标签，例如：[语音条:[excited] 真的？那我可得好好准备一下。]。不要为此把所有回复改成语音。",
