@@ -47,13 +47,15 @@ import { deleteWeixinCloudMessagesFromCloud, emitWeixinSyncToast, syncAllWeixinB
 import { loadBindingConfig, loadPresets, loadRegexes, resolveBinding, resolveUserIdentity } from "@/lib/settings-storage";
 import { generateGroupChatCompletion, generateGroupOfflineChatCompletion, parseGroupChatResponse, buildEditableGroupRoundText } from "@/lib/group-chat-engine";
 import { appendChatOfflineTurn, deleteChatOfflineTurn, deleteChatOfflineTurnsFrom, extractThinkingTag, loadChatOfflineTurns, parseOfflineResponse, saveChatOfflineTurns, updateChatOfflineTurn, type ChatOfflineTurn } from "@/lib/chat-offline-storage";
+import { resolveVoiceConfig, synthesizeSpeech } from "@/lib/tts-service";
+import { playAudioBlobViaMediaElement } from "@/lib/tts-service";
 import { applyDisplayRegex, applyEditRegex } from "@/lib/llm-prompt-assembler";
 import { scheduleFollowUp, cancelFollowUp, cancelBackgroundGeneration, isBackgroundReplyGenerating } from "@/lib/follow-up-service";
 import { useKeyboardDismissAutoSend } from "@/components/chat/use-keyboard-dismiss-auto-send";
 import { cancelBailoutKey } from "@/lib/push-bailout-client";
 import { PENDING_REPLY_PREFIX } from "@/lib/friend-request-engine";
 import type { UserIdentity } from "@/components/settings/user-identity";
-import { AlertCircle, Blocks, Check, Trash2, User, ChevronLeft, ChevronRight, Clapperboard, Clock, Gift, Languages, Loader2, MoreHorizontal, X } from "lucide-react";
+import { AlertCircle, Blocks, Check, Trash2, User, ChevronLeft, ChevronRight, Clapperboard, Clock, Gift, Languages, Loader2, MoreHorizontal, Mic, X } from "lucide-react";
 import { setDebugChatState } from "@/lib/debug-store";
 import { SessionCustomCSS } from "@/components/ui/session-custom-css";
 import { setChatActive } from "@/lib/music-action-queue";
@@ -1134,6 +1136,9 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [offlineExportRangeOpen, setOfflineExportRangeOpen] = useState(false);
     const [selectedOfflineExportTurnIds, setSelectedOfflineExportTurnIds] = useState<Set<string>>(new Set());
     const [offlineExportFilterQuery, setOfflineExportFilterQuery] = useState("");
+    const [offlineExportFileName, setOfflineExportFileName] = useState("");
+    const [offlineChapterSummary, setOfflineChapterSummary] = useState<{ title: string; text: string; turnIds: string[] } | null>(null);
+    const [offlineVoiceBusyId, setOfflineVoiceBusyId] = useState<string | null>(null);
 
     // Rich media input modals
     const [richModal, setRichModal] = useState<RichModalKind | null>(null);
@@ -4049,6 +4054,51 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         return offlineTurns.slice(-offlineVisibleCount);
     }, [offlineTurns, offlineVisibleCount]);
 
+    const offlineToneForText = (text: string): string => {
+        if (/(哈哈哈|嘿嘿|开心|高兴|笑|兴奋|太好了|喜欢)/.test(text)) return "开心";
+        if (/(哭|眼泪|难过|悲伤|失落|对不起|抱歉)/.test(text)) return "悲伤";
+        if (/(生气|愤怒|滚|闭嘴|烦死|怒)/.test(text)) return "生气";
+        if (/(震惊|惊讶|没想到|居然|天啊|什么？！)/.test(text)) return "惊讶";
+        if (/(低声|轻声|悄声|呢喃)/.test(text)) return "低语";
+        return "平静";
+    };
+
+    const playOfflineVoice = async (turn: ChatOfflineTurn) => {
+        if (offlineVoiceBusyId) return;
+        const text = turn.assistantContent.replace(/<[^>]+>/g, " ").trim();
+        if (!text) return;
+        const config = resolveVoiceConfig(session.contactId, session.isGroup ? "group_chat" : "chat");
+        if (!config || !config.enableTTS) {
+            showChatToast("请先在设置中配置并启用语音合成");
+            return;
+        }
+        setOfflineVoiceBusyId(turn.id);
+        try {
+            const emotion = offlineToneForText(text);
+            const blob = await synthesizeSpeech(text, config, { emotion: emotion === "平静" ? "neutral" : emotion === "开心" ? "happy" : emotion === "悲伤" ? "sad" : emotion === "生气" ? "angry" : emotion === "惊讶" ? "surprised" : "calm" });
+            if (!blob) throw new Error("未返回音频");
+            const playback = playAudioBlobViaMediaElement(blob);
+            await playback.promise;
+        } catch (error) {
+            showChatToast(`语音生成失败：${error instanceof Error ? error.message : String(error)}`, 3000);
+        } finally {
+            setOfflineVoiceBusyId(null);
+        }
+    };
+
+    const summarizeSelectedOfflineTurns = () => {
+        const indices = Array.from(selectedOfflineExportTurnIds).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+        const selected = indices.map(index => offlineTurns[index]).filter(Boolean);
+        if (!selected.length) { showChatToast("请先勾选需要总结的小节"); return; }
+        const title = new Date(selected[0].createdAt).toLocaleDateString("zh-CN");
+        const text = selected.map((turn, index) => {
+            const body = turn.summary.trim() || turn.assistantContent.trim();
+            return `小节 ${indices[index] + 1}：${body}`;
+        }).join("\n\n");
+        setOfflineChapterSummary({ title, text, turnIds: selected.map(turn => turn.id) });
+        setOfflineExportRangeOpen(false);
+    };
+
     const hasMoreOfflineTurns = visibleOfflineTurns.length < offlineTurns.length;
 
     const offlineDisplayByTurnId = useMemo(() => {
@@ -5518,7 +5568,10 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         left: 12,
                         right: 12,
                         zIndex: 45,
-                        background: "var(--c-page-body-bg, #ffffff)",
+                        background: "rgba(220, 205, 248, 0.78)",
+                        border: "1px solid rgba(139, 92, 246, 0.28)",
+                        backdropFilter: "blur(18px)",
+                        WebkitBackdropFilter: "blur(18px)",
                         borderRadius: 16,
                         boxShadow: "0 10px 30px rgba(0,0,0,0.18), 0 0 0 1px var(--c-border, rgba(0,0,0,0.08))",
                         padding: "12px 14px",
@@ -5592,6 +5645,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                     showChatToast("当前暂无线下剧情记录");
                                     return;
                                 }
+                                setOfflineExportFileName(`线下剧本_${session.alias || character?.name || "对方"}_全本`);
                                 const lines: string[] = [];
                                 lines.push(`========================================`);
                                 lines.push(` 线下模式 · 与「${session.alias || character?.name || "对方"}」完整剧本`);
@@ -5618,7 +5672,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                 const url = URL.createObjectURL(blob);
                                 const a = document.createElement("a");
                                 a.href = url;
-                                a.download = `线下剧本_${session.alias || character?.name || "对方"}_全本_${new Date().toISOString().slice(0, 10)}.txt`;
+                                a.download = `${(offlineExportFileName.trim() || `线下剧本_${session.alias || character?.name || "对方"}_全本`).replace(/[\\/:*?"<>|]/g, "_")}_${new Date().toISOString().slice(0, 10)}.txt`;
                                 document.body.appendChild(a);
                                 a.click();
                                 document.body.removeChild(a);
@@ -5691,7 +5745,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                             key={turn.id || origIdx}
                                             type="button"
                                             onClick={() => {
-                                                setOfflineSearchFloatOpen(false);
+                                                // 搜索窗保持打开，方便连续查看多个命中章节
                                                 // 自动展开到目标位置
                                                 const targetIdx = offlineTurns.findIndex(t => t.id === turn.id);
                                                 if (targetIdx !== -1) {
@@ -5843,6 +5897,23 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                             </div>
                         </div>
 
+                        <input
+                            type="text"
+                            value={offlineExportFileName}
+                            onChange={e => setOfflineExportFileName(e.target.value)}
+                            placeholder="文件名（不含 .txt）"
+                            style={{
+                                width: "100%",
+                                boxSizing: "border-box",
+                                padding: "6px 10px",
+                                borderRadius: 6,
+                                border: "1px solid rgba(139, 92, 246, 0.28)",
+                                background: "rgba(255,255,255,0.58)",
+                                fontSize: 12,
+                                outline: "none",
+                            }}
+                        />
+
                         {/* 弹窗内搜索过滤 */}
                         <input
                             type="text"
@@ -5956,6 +6027,23 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                             <button
                                 type="button"
                                 style={{
+                                    flex: 1,
+                                    padding: "9px 0",
+                                    borderRadius: 8,
+                                    border: "1px solid rgba(139, 92, 246, 0.34)",
+                                    background: "rgba(139, 92, 246, 0.12)",
+                                    color: "#5b21b6",
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                }}
+                                onClick={summarizeSelectedOfflineTurns}
+                            >
+                                总结为大章节
+                            </button>
+                            <button
+                                type="button"
+                                style={{
                                     flex: 1.4,
                                     padding: "9px 0",
                                     borderRadius: 8,
@@ -6001,7 +6089,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                     const url = URL.createObjectURL(blob);
                                     const a = document.createElement("a");
                                     a.href = url;
-                                    a.download = `线下剧本_${session.alias || character?.name || "对方"}_精选${selectedTurns.length}回合_${new Date().toISOString().slice(0, 10)}.txt`;
+                                    a.download = `${(offlineExportFileName.trim() || `线下剧本_${session.alias || character?.name || "对方"}_精选${selectedTurns.length}回合`).replace(/[\\/:*?"<>|]/g, "_")}_${new Date().toISOString().slice(0, 10)}.txt`;
                                     document.body.appendChild(a);
                                     a.click();
                                     document.body.removeChild(a);
@@ -6032,6 +6120,14 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             >
                 {offlineMode && (
                     <div className="chat-offline-body">
+                        {offlineChapterSummary && (
+                            <details className="chat-offline-summary-fold" open>
+                                <summary>大章节 · {offlineChapterSummary.title}</summary>
+                                <div className="chat-offline-summary-content">
+                                    <BilingualTextBlock text={offlineChapterSummary.text} mode="markdown" defaultExpanded />
+                                </div>
+                            </details>
+                        )}
                         {offlineTurns.length === 0 && !pendingOfflineUserText ? (
                             <div className="chat-offline-empty">
                                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0Z" /><circle cx="12" cy="10" r="3" /></svg>
@@ -6096,6 +6192,17 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                     </div>
                                     <div className="chat-offline-label-row">
                                         <div className="chat-offline-label">{session.isGroup ? (session.groupName || "群聊") : (character?.name || "对方")}</div>
+                                        <span className="chat-offline-tone-tag">语气：{offlineToneForText(turn.assistantContent)}</span>
+                                        <button
+                                            type="button"
+                                            className="chat-offline-voice-btn"
+                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); void playOfflineVoice(turn); }}
+                                            disabled={offlineVoiceBusyId === turn.id}
+                                            aria-label="生成并播放线下语音"
+                                            title="生成并播放线下语音"
+                                        >
+                                            {offlineVoiceBusyId === turn.id ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
+                                        </button>
                                         {assistantHasHtmlPreview ? (
                                             <button
                                                 type="button"

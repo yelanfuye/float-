@@ -288,6 +288,7 @@ export function ChatSettingsPanel({
     session,
     onClose,
     onJumpToMessage,
+    onOpenOfflineSearchFloating,
     onDeleteFriend,
     onSessionDeleted,
     onToolHistoryCleared,
