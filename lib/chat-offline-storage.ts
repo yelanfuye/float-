@@ -3,7 +3,9 @@ import { formatChatTimestamp } from "./llm-prompt-assembler";
 import { kvGet, kvRemove, kvSet, registerDynamicPrefix } from "./kv-db";
 
 const CHAT_OFFLINE_TURNS_PREFIX = "ai_phone_chat_offline_turns:";
+const CHAT_OFFLINE_CHAPTERS_PREFIX = "ai_phone_chat_offline_chapters:";
 registerDynamicPrefix(CHAT_OFFLINE_TURNS_PREFIX);
+registerDynamicPrefix(CHAT_OFFLINE_CHAPTERS_PREFIX);
 
 export type ChatOfflineTurn = {
     id: string;
@@ -18,6 +20,44 @@ export type ChatOfflineTurn = {
     thinkingTag?: string; // 实际用于提取思维链的标签名（preset.thinking_tag 或默认 thinking）
     createdAt: string;
 };
+
+export type ChatOfflineChapter = {
+    id: string;
+    sessionId: string;
+    title: string;
+    content: string;
+    turnIds: string[];
+    createdAt: string;
+};
+
+function chapterStorageKey(sessionId: string): string {
+    return `${CHAT_OFFLINE_CHAPTERS_PREFIX}${sessionId}`;
+}
+
+export function loadChatOfflineChapters(sessionId: string): ChatOfflineChapter[] {
+    try {
+        const raw = kvGet(chapterStorageKey(sessionId));
+        const parsed = raw ? JSON.parse(raw) as unknown : [];
+        if (!Array.isArray(parsed)) return [];
+        return parsed.flatMap((item): ChatOfflineChapter[] => {
+            if (!item || typeof item !== "object") return [];
+            const value = item as Partial<ChatOfflineChapter>;
+            if (typeof value.id !== "string" || typeof value.title !== "string" || !Array.isArray(value.turnIds)) return [];
+            return [{
+                id: value.id,
+                sessionId: typeof value.sessionId === "string" ? value.sessionId : sessionId,
+                title: value.title,
+                content: typeof value.content === "string" ? value.content : "",
+                turnIds: value.turnIds.filter((id): id is string => typeof id === "string"),
+                createdAt: typeof value.createdAt === "string" ? value.createdAt : new Date(0).toISOString(),
+            }];
+        });
+    } catch { return []; }
+}
+
+export function saveChatOfflineChapters(sessionId: string, chapters: ChatOfflineChapter[]): void {
+    kvSet(chapterStorageKey(sessionId), JSON.stringify(chapters));
+}
 
 export type ChatOfflineProjectionEntry = {
     id: string;
