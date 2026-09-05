@@ -244,8 +244,9 @@ const RICH_PATTERNS: {
         },
     },
     {
-        // [语音条:文字内容] — voice message
-        regex: new RegExp(`\\[语音条${C}([^\\]]+)\\]`),
+        // Permit one level of English audio-direction brackets inside a voice message.
+        // Do not consume unrelated nested Chinese rich-message directives.
+        regex: new RegExp(`\\[语音条${C}((?:[^\\[\\]]|\\[[A-Za-z][A-Za-z ,'-]{0,79}\\])+)\\]`),
         build: (m) => ({
             content: "",
             mediaType: "audio" as const,

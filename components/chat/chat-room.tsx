@@ -7,7 +7,8 @@ import { parseStateValues, mergeStateValues } from "@/lib/state-value-parser";
 import { parseAIResponse, type ParsedMessagePart } from "@/lib/rich-message-parser";
 import { isKnownStickerLabel } from "@/lib/sticker-data";
 import { translateReasoningText } from "@/lib/reasoning-translate";
-import { MessageBubble, MediaDetailModal, prewarmStickerCache, BilingualTextBlock, isStandaloneHtmlPreviewContent, normalizeTextBubbleContent } from "./message-bubble";
+import { MessageBubble, MediaDetailModal, prewarmStickerCache, BilingualTextBlock, isStandaloneHtmlPreviewContent, normalizeTextBubbleContent, synthesizeVoiceForMessage } from "./message-bubble";
+import { splitBilingualText } from "@/lib/bilingual-text";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
 import { PhotoInputModal, TextPhotoModal, VoiceRecordModal, RedPacketModal, LocationInputModal, SystemInstructionModal } from "./rich-input-modals";
 import { EmojiPanel, StickerPanel } from "./emoji-panel";
@@ -4604,6 +4605,32 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         return "displaySourceId" in msg && msg.displaySourceId ? msg.displaySourceId : msg.id;
     };
 
+    const handleRegenerateVoice = async (message: ChatMessage) => {
+        const id = getStoredActionMessageId(message);
+        closeContextMenu();
+        const stored = loadChatMessages(session.id).find(item => item.id === id);
+        if (!stored || stored.role !== "assistant" || stored.mediaType !== "audio" || stored.isRetracted) {
+            showChatToast("只能重新生成已保存的角色语音"); return;
+        }
+        const characterId = stored.senderCharacterId || (!session.isGroup ? character?.id : undefined);
+        if (!characterId) { showChatToast("无法确定语音所属角色"); return; }
+        const label = stored.mediaData?.label?.trim();
+        if (!label) { showChatToast("这条语音没有朗读文字"); return; }
+        const speechText = splitBilingualText(label)?.original || label;
+        const text = window.prompt("确认本次 TTS 文本，可为 v3 手动加入音频标签；不修改聊天原文。本次编辑不保存为下次默认文本。", speechText);
+        if (text === null) return;
+        if (!text.trim()) { showChatToast("文本不能为空"); return; }
+        if (!window.confirm("重新生成将消耗语音额度，成功后替换旧音频，失败保留。使用角色当前语音配置，不重试聊天回复。继续吗？")) return;
+        showChatToast("正在重新生成语音，请勿重复操作", 3500);
+        try {
+            await synthesizeVoiceForMessage(id, characterId, speechText, text.trim(), true);
+            syncMessagesFromStorage();
+            showChatToast("已重新生成，请点击语音播放", 3500);
+        } catch (error: unknown) {
+            window.alert(`重新生成失败：${error instanceof Error ? error.message : String(error)}`);
+        }
+    };
+
     /** Reusable context menu for user/assistant bubbles */
     const renderBubbleContextMenu = (m: ChatMessage, options?: { allowMultiSelect?: boolean }) => {
         const storedMessageId = getStoredActionMessageId(m);
@@ -4655,6 +4682,14 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     <button onClick={() => handleDeleteMessage(storedMessageId)} className="ctx-menu-btn ctx-menu-btn-danger">删除</button>
                     <button onClick={() => handleDeleteMessagesFrom(storedMessageId)} className="ctx-menu-btn ctx-menu-btn-danger">删除以下</button>
                 </div>
+                {m.role === "assistant" && m.mediaType === "audio" && !m.isRetracted && Boolean(m.mediaData?.label?.trim()) && (
+                    <div className="flex">
+                        <button type="button" className="ctx-menu-btn" onClick={(event) => {
+                            event.stopPropagation();
+                            void handleRegenerateVoice(m);
+                        }}>重新生成语音</button>
+                    </div>
+                )}
                 {(() => {
                     // 聊天插件注册的消息操作菜单项
                     const pluginActions = getChatPluginRuntime().getMessageActions(m);

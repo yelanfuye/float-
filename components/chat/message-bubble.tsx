@@ -2203,14 +2203,15 @@ function XiaohongshuShareBubble({ msg }: { msg: ChatMessage }) {
 // 计费还留下点不动的死气泡（用户实报），点击触发 + 全局去重从根上断掉。
 const _voiceSynthInFlight = new Map<string, Promise<string>>();
 
-function synthesizeVoiceForMessage(msgId: string, characterId: string, speechText: string): Promise<string> {
+export function synthesizeVoiceForMessage(msgId: string, characterId: string, speechText: string, ttsText = speechText, regenerate = false): Promise<string> {
     const existing = _voiceSynthInFlight.get(msgId);
-    if (existing) return existing;
+    if (existing) return regenerate ? Promise.reject(new Error("这条语音正在生成，请稍后再试")) : existing;
     const task = (async () => {
         const { resolveVoiceConfig, synthesizeSpeech } = await import("@/lib/tts-service");
         const vc = resolveVoiceConfig(characterId);
         if (!vc) throw new Error("未绑定语音配置");
-        const blob = await synthesizeSpeech(speechText, vc);
+        if (!vc.enableTTS) throw new Error("当前配置未启用语音合成");
+        const blob = await synthesizeSpeech(ttsText, vc);
         if (!blob) throw new Error("合成失败");
         const dataUrl = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();

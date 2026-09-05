@@ -17,6 +17,7 @@ import { formatCharacterRelationsForPrompt } from "./character-world-storage";
 import { buildCharacterTimeContext, buildGroupTimeContext, type CharacterTimeContext } from "./character-time";
 import { formatShoppingPaymentRequestHistory } from "./shopping-payment-request";
 import { buildGroupAdminBracketText } from "./group-admin";
+import { loadVoiceConfigs, loadBindingConfig, resolveBinding } from "./settings-storage";
 
 export type LLMMessageRole = "system" | "user" | "assistant" | "tool";
 export type LLMToolCallPayload = { id: string; name: string; args: Record<string, unknown>; thoughtSignature?: string };
@@ -619,6 +620,26 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
     const periodCareContext = input.periodCareContext ?? "";
     const resolvedUserName = userIdentity?.name || userName;
     const blocks: PromptBlock[] = [];
+    if (appId === "chat" && activeTags.includes("chat")) {
+        const slot = resolveBinding(loadBindingConfig(), character.id, "chat");
+        const voice = loadVoiceConfigs().find(item => item.id === slot.voiceConfigId);
+        if (voice?.enableTTS && voice.provider === "ElevenLabs" && voice.model?.trim().toLowerCase() === "eleven_v3") {
+            const inCall = activeTags.includes("voice") || activeTags.includes("video");
+            blocks.push({
+                role: "system", depth: 0, order: 990,
+                marker: "ElevenLabs-v3-speech-direction",
+                text: [
+                    "【ElevenLabs v3 语音台词规则】只调整需要朗读的台词，保持角色设定、事实、语言及其他输出协议。",
+                    "目标是自然日常对话：少用书面总结和报告式连接词，允许短句、省略与自然回应；语气词适量，不要每句添加嗯、啊、呀或省略号。",
+                    "在明确需要改变语气的位置，可用简短英文方括号音频指令。参考：[whispers] 耳语、[sighs] 叹气、[excited] 兴奋、[laughs] 笑、[sad] 难过、[angry] 生气。它们是表达方向，不保证每个音色都同样执行。",
+                    "不是每句都需要标签，普通句子可不标。不要把开心一律写成兴奋，不用哭喊、喘息、笑声、耳语堆砌活人感；不为标签改变原意。使用正常标点组织节奏，不使用 SSML。",
+                    inCall
+                        ? "当前为通话：按原协议输出说话正文，将必要标签直接放在对应台词中，不额外包裹语音条，不朗读动作说明或内心旁白。"
+                        : "普通文字消息不要加音频标签。只有发送语音时，在[语音条:台词]内部写台词和必要标签，例如：[语音条:[excited] 真的？那我可得好好准备一下。]。不要为此把所有回复改成语音。",
+                ].join("\n"),
+            });
+        }
+    }
     const timeAware = resolveTimeAware(input.timeAware);
     const promptTimeContext = input.timeContext ?? buildCharacterTimeContext(character.timeZone);
     const promptTimestampOptions = input.promptTimestampOptions
