@@ -2,6 +2,7 @@
 
 import type { VoiceApiConfig, ContentAppId } from "./settings-types";
 import { loadVoiceConfigs, loadBindingConfig, resolveBinding } from "./settings-storage";
+import { synthesizeElevenLabs as synthesizeElevenLabsV3 } from "./elevenlabs-tts";
 
 export type VoiceApiConfigResolved = VoiceApiConfig;
 
@@ -44,7 +45,10 @@ export async function synthesizeSpeech(
     }
 
     if (provider === "ElevenLabs") {
-        return synthesizeElevenLabs(text, voiceConfig);
+        if ((voiceConfig.model || "eleven_v3").trim().toLowerCase() === "eleven_v3") {
+            return synthesizeElevenLabs(text, voiceConfig);
+        }
+        return synthesizeElevenLabsLegacy(text, voiceConfig);
     }
 
     return null;
@@ -213,6 +217,18 @@ function buildElevenLabsTtsUrl(baseUrl: string, voiceId: string): string {
 }
 
 async function synthesizeElevenLabs(text: string, config: VoiceApiConfig): Promise<Blob | null> {
+    const result = await synthesizeElevenLabsV3({
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl,
+        voiceId: config.defaultVoice,
+        text,
+        modelId: "eleven_v3",
+        outputFormat: config.elevenLabsOutputFormat ?? "provider_default",
+    });
+    return result.blob;
+}
+
+async function synthesizeElevenLabsLegacy(text: string, config: VoiceApiConfig): Promise<Blob | null> {
     const apiKey = normalizeElevenLabsApiKey(config.apiKey);
     if (!apiKey) throw new Error("ElevenLabs API Key 未配置");
 
