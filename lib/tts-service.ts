@@ -204,11 +204,11 @@ function buildElevenLabsTtsUrl(baseUrl: string, voiceId: string): string {
     // Keep the output format explicit so the upstream default cannot silently change.
     try {
         const url = new URL(endpoint);
-        url.searchParams.set("output_format", "mp3_44100_192");
+        url.searchParams.set("output_format", "mp3_44100_128");
         return url.toString();
     } catch {
         const separator = endpoint.includes("?") ? "&" : "?";
-        return `${endpoint}${separator}output_format=mp3_44100_192`;
+        return `${endpoint}${separator}output_format=mp3_44100_128`;
     }
 }
 
