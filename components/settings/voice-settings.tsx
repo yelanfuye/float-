@@ -853,22 +853,7 @@ export function VoiceSettings() {
                                         {config.provider === "ElevenLabs" && (
                                             <>
                                                 {config.model?.toLowerCase() === "eleven_v3" ? (
-                                                    <>
-                                                        <div className="flex flex-col gap-1">
-                                                            <label className="menu-desc ml-1">输出格式 (Output Format)</label>
-                                                            <select
-                                                                value={config.elevenLabsOutputFormat || "provider_default"}
-                                                                onChange={(e) => updateConfig(config.id, { elevenLabsOutputFormat: e.target.value as VoiceApiConfig["elevenLabsOutputFormat"] })}
-                                                                className="ui-select"
-                                                            >
-                                                                <option value="provider_default">接口默认（推荐）</option>
-                                                                <option value="mp3_44100_128">MP3 44.1kHz / 128kbps</option>
-                                                                <option value="mp3_44100_192">MP3 44.1kHz / 192kbps（可能受套餐限制）</option>
-                                                            </select>
-                                                            <span className="menu-desc ml-1">默认不强制指定码率；显式格式会检查实际返回的 MP3 参数，不符合时提示错误，不自动重试。</span>
-                                                        </div>
-                                                        <div className="menu-desc ml-1">v3 使用语音文本中的音频标签编排表达。临时参数实验已移除；现有音频不会自动重新生成。</div>
-                                                    </>
+                                                    <div className="menu-desc ml-1">v3 使用语音文本中的音频标签编排表达。临时参数实验已移除；现有音频不会自动重新生成。</div>
                                                 ) : (
                                                     <>
                                                     {([

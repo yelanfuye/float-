@@ -2,7 +2,6 @@
 
 import type { VoiceApiConfig, ContentAppId } from "./settings-types";
 import { loadVoiceConfigs, loadBindingConfig, resolveBinding } from "./settings-storage";
-import { synthesizeElevenLabs as synthesizeElevenLabsV3 } from "./elevenlabs-tts";
 
 export type VoiceApiConfigResolved = VoiceApiConfig;
 
@@ -203,32 +202,7 @@ function normalizeElevenLabsBaseUrl(value: string | undefined): string {
     return /^https:\/\/api\.elevenlabs\.io$/i.test(raw) ? `${raw}/v1` : raw;
 }
 
-function buildElevenLabsTtsUrl(baseUrl: string, voiceId: string): string {
-    const endpoint = `${baseUrl}/text-to-speech/${encodeURIComponent(voiceId.trim())}`;
-    // Keep the output format explicit so the upstream default cannot silently change.
-    try {
-        const url = new URL(endpoint);
-        url.searchParams.set("output_format", "mp3_44100_128");
-        return url.toString();
-    } catch {
-        const separator = endpoint.includes("?") ? "&" : "?";
-        return `${endpoint}${separator}output_format=mp3_44100_128`;
-    }
-}
-
 async function synthesizeElevenLabs(text: string, config: VoiceApiConfig): Promise<Blob | null> {
-    const result = await synthesizeElevenLabsV3({
-        apiKey: config.apiKey,
-        baseUrl: config.baseUrl,
-        voiceId: config.defaultVoice,
-        text,
-        modelId: "eleven_v3",
-        outputFormat: config.elevenLabsOutputFormat ?? "provider_default",
-    });
-    return result.blob;
-}
-
-async function synthesizeElevenLabsLegacy(text: string, config: VoiceApiConfig): Promise<Blob | null> {
     const apiKey = normalizeElevenLabsApiKey(config.apiKey);
     if (!apiKey) throw new Error("ElevenLabs API Key 未配置");
 

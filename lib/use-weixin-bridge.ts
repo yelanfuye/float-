@@ -88,15 +88,15 @@ async function startKeepAlive() {
         }
     } catch {}
 
-    // 准备音频
-    ensureAudioCreated();
-
-    // 先尝试直接播放（如果之前已有用户手势则可以成功）
-    _keepAliveAudio!.play().catch(() => {
-        // 失败了：注册监听，等下一次用户触摸时播放
-        document.addEventListener("touchstart", onUserGesture, { capture: true, once: false });
-        document.addEventListener("click", onUserGesture, { capture: true, once: false });
-    });
+    // Do not keep a silent audio element playing. It can seize the browser/OS
+    // audio session and make unrelated TTS sound muffled on some Android devices.
+    // Wake Lock remains available; background timer keep-alive is intentionally
+    // sacrificed to keep speech playback on the normal media route.
+    if (_keepAliveAudio) {
+        try { _keepAliveAudio.pause(); } catch {}
+    }
+    document.removeEventListener("touchstart", onUserGesture, true);
+    document.removeEventListener("click", onUserGesture, true);
 }
 
 function stopKeepAlive() {
