@@ -223,15 +223,16 @@ async function synthesizeElevenLabs(text: string, config: VoiceApiConfig): Promi
         };
     }
 
-    const response = await fetchWithTimeout("/api/voice/elevenlabs-tts", {
+    // Browser-direct TTS, like MiniMax: bypass deployment-platform access gates.
+    // The configured provider must allow CORS for Content-Type and xi-api-key.
+    const response = await fetchWithTimeout(`${baseUrl}/text-to-speech/${encodeURIComponent(voiceId.trim())}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            apiKey,
-            baseUrl,
-            voiceId,
-            payload: requestBody,
-        }),
+        headers: {
+            "xi-api-key": apiKey,
+            "Content-Type": "application/json",
+            Accept: "audio/mpeg",
+        },
+        body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
@@ -239,12 +240,16 @@ async function synthesizeElevenLabs(text: string, config: VoiceApiConfig): Promi
         let detail = errText.trim();
         try {
             const payload = JSON.parse(errText) as Record<string, unknown>;
-            detail = String(payload.message || payload.error || detail);
+            const upstreamDetail = payload.detail;
+            const nestedMessage = upstreamDetail && typeof upstreamDetail === "object"
+                ? (upstreamDetail as Record<string, unknown>).message
+                : upstreamDetail;
+            detail = String(nestedMessage || payload.message || payload.error || detail);
         } catch {
-            // Keep the raw response when the proxy does not return JSON.
+            // Preserve non-JSON errors from the configured endpoint.
         }
         if (response.status === 401) {
-            throw new Error(`ElevenLabs API Key 未通过鉴权 (401)：${detail || "请确认使用的是 ElevenLabs API Key，而不是其他服务的密钥"}`);
+            throw new Error(`ElevenLabs 配置的直连接口返回 401（鉴权或访问受限）：${detail || "请检查接口的鉴权与访问限制"}`);
         }
         throw new Error(`ElevenLabs TTS 请求失败 (${response.status})：${detail || "上游未提供错误详情"}`);
     }
