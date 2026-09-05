@@ -150,6 +150,8 @@ export type VoiceApiConfig = {
     elevenStyle?: number;
     /** ElevenLabs voice_settings.use_speaker_boost. */
     elevenSpeakerBoost?: boolean;
+    /** Opt-in v3 parameter compatibility experiment; absent/false preserves baseline. */
+    elevenV3ExpressionExperiment?: boolean;
     customVoices?: { id: string; name: string; createdAt?: number }[];
     enableSTT: boolean;
     enableTTS: boolean;

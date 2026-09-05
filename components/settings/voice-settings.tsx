@@ -852,9 +852,18 @@ export function VoiceSettings() {
                                         {config.provider === "ElevenLabs" && (
                                             <>
                                                 {config.model?.toLowerCase() === "eleven_v3" ? (
-                                                    <div className="menu-desc ml-1">
-                                                        Eleven v3 使用文本中的音频标签控制情绪和表达，例如 [happy]、[sad]、[whispering]；v3 不发送旧版 voice_settings 参数。
-                                                    </div>
+                                                    <>
+                                                        <div className="ui-toggle-row">
+                                                            <span className="menu-label font-medium">v3 表达参数实验</span>
+                                                            <Toggle checked={config.elevenV3ExpressionExperiment === true} onChange={(value) => updateConfig(config.id, { elevenV3ExpressionExperiment: value })} />
+                                                        </div>
+                                                        <div className="menu-desc ml-1">
+                                                            默认关闭：不发送 voice_settings，保持原有请求。开启：仅发送 stability=0.4、similarity_boost=0.75、style=0.3，测试接口兼容性与表达效果；不额外发送 Speaker Boost 或速度参数，不添加情绪标签。
+                                                        </div>
+                                                        <div className="menu-desc ml-1">
+                                                            此开关对使用本配置的新生成语音生效，试听会消耗额度。请用相同音色、文本对照；如出现参数错误请关闭并保留错误信息，不会自动重试。返回成功不代表每个参数都生效。
+                                                        </div>
+                                                    </>
                                                 ) : (
                                                     <>
                                                     {([
