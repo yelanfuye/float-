@@ -853,9 +853,25 @@ export function VoiceSettings() {
                                             <>
                                                 {config.model?.toLowerCase() === "eleven_v3" ? (
                                                     <>
-                                                        <div className="ui-toggle-row">
+                                                        <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%" }}>
                                                             <span className="menu-label font-medium">v3 表达参数实验</span>
-                                                            <Toggle checked={config.elevenV3ExpressionExperiment === true} onChange={(value) => updateConfig(config.id, { elevenV3ExpressionExperiment: value })} />
+                                                            <button
+                                                                type="button"
+                                                                aria-pressed={config.elevenV3ExpressionExperiment === true}
+                                                                onClick={() => updateConfig(config.id, { elevenV3ExpressionExperiment: config.elevenV3ExpressionExperiment !== true })}
+                                                                style={{
+                                                                    display: "block", width: "100%", minHeight: 48,
+                                                                    padding: "12px 16px", border: "2px solid #334155",
+                                                                    borderRadius: 12, fontSize: 14, fontWeight: 700,
+                                                                    lineHeight: 1.5, cursor: "pointer", whiteSpace: "normal",
+                                                                    backgroundColor: config.elevenV3ExpressionExperiment === true ? "#1e3a8a" : "#ffffff",
+                                                                    color: config.elevenV3ExpressionExperiment === true ? "#ffffff" : "#111827",
+                                                                }}
+                                                            >
+                                                                {config.elevenV3ExpressionExperiment === true
+                                                                    ? "已开启实验参数 · 点击关闭，恢复基线"
+                                                                    : "已关闭实验参数 · 点击开启对照测试"}
+                                                            </button>
                                                         </div>
                                                         <div className="menu-desc ml-1">
                                                             默认关闭：不发送 voice_settings，保持原有请求。开启：仅发送 stability=0.4、similarity_boost=0.75、style=0.3，测试接口兼容性与表达效果；不额外发送 Speaker Boost 或速度参数，不添加情绪标签。
