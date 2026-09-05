@@ -150,6 +150,7 @@ export type VoiceApiConfig = {
     elevenStyle?: number;
     /** ElevenLabs voice_settings.use_speaker_boost. */
     elevenSpeakerBoost?: boolean;
+    elevenLabsOutputFormat?: "provider_default" | "mp3_44100_128" | "mp3_44100_192";
     customVoices?: { id: string; name: string; createdAt?: number }[];
     enableSTT: boolean;
     enableTTS: boolean;
