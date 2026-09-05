@@ -49,6 +49,7 @@ import { generateGroupChatCompletion, generateGroupOfflineChatCompletion, parseG
 import { appendChatOfflineTurn, deleteChatOfflineTurn, deleteChatOfflineTurnsFrom, extractThinkingTag, loadChatOfflineTurns, loadChatOfflineChapters, parseOfflineResponse, saveChatOfflineTurns, saveChatOfflineChapters, updateChatOfflineTurn, type ChatOfflineChapter, type ChatOfflineTurn } from "@/lib/chat-offline-storage";
 import { resolveVoiceConfig, synthesizeSpeech } from "@/lib/tts-service";
 import { playAudioBlobViaMediaElement } from "@/lib/tts-service";
+import { loadMediaBlob, storeMediaBlob } from "@/lib/media-cache-storage";
 import { applyDisplayRegex, applyEditRegex } from "@/lib/llm-prompt-assembler";
 import { scheduleFollowUp, cancelFollowUp, cancelBackgroundGeneration, isBackgroundReplyGenerating } from "@/lib/follow-up-service";
 import { useKeyboardDismissAutoSend } from "@/components/chat/use-keyboard-dismiss-auto-send";
@@ -1112,6 +1113,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [activeOfflineTarget, setActiveOfflineTarget] = useState<OfflineActionTarget | null>(null);
     const [editingOfflineTarget, setEditingOfflineTarget] = useState<OfflineActionTarget | null>(null);
     const [editingOfflineContent, setEditingOfflineContent] = useState("");
+    const [editingOfflineTone, setEditingOfflineTone] = useState("");
     const [regexRevision, setRegexRevision] = useState(0);
     // Whether there are unsent user messages waiting for AI generation
     const [pendingGenerate, setPendingGenerate] = useState(false);
@@ -1141,6 +1143,11 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [offlineChapterName, setOfflineChapterName] = useState("");
     const [expandedOfflineChapterIds, setExpandedOfflineChapterIds] = useState<Set<string>>(() => new Set(loadChatOfflineChapters(session.id).map(chapter => chapter.id)));
     const [offlineVoiceBusyId, setOfflineVoiceBusyId] = useState<string | null>(null);
+    const [offlineVoiceConfirm, setOfflineVoiceConfirm] = useState<{ turnId: string; key: string; text: string; tone?: string } | null>(null);
+    const [activeOfflineChapterId, setActiveOfflineChapterId] = useState<string | null>(null);
+    const offlineVoiceLongPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const offlineVoiceLongPressedRef = useRef(false);
+    const offlineChapterLongPressedRef = useRef(false);
 
     // Rich media input modals
     const [richModal, setRichModal] = useState<RichModalKind | null>(null);
@@ -4080,7 +4087,6 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 `【小节 ${indices[index] + 1}】`,
                 turn.userContent.trim() ? `你的行动：\n${turn.userContent.trim()}` : "",
                 turn.assistantContent.trim() ? `剧情正文：\n${turn.assistantContent.trim()}` : "",
-                turn.summary.trim() ? `剧情摘要：\n${turn.summary.trim()}` : "",
             ].filter(Boolean).join("\n\n")).join("\n\n================================\n\n"),
             turnIds: selected.map(turn => turn.id),
             createdAt: new Date().toISOString(),
@@ -4106,15 +4112,50 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         return parts.filter(part => part.text.trim());
     };
 
-    const playOfflineDialogueVoice = async (text: string, turnId: string) => {
+    const playOfflineDialogueVoice = async (turn: ChatOfflineTurn, text: string, key: string) => {
         if (offlineVoiceBusyId) return;
-        const config = resolveVoiceConfig(session.contactId, session.isGroup ? "group_chat" : "chat");
-        if (!config || !config.enableTTS) { showChatToast("请先配置并启用语音合成"); return; }
-        setOfflineVoiceBusyId(turnId);
+        const cachedRef = turn.dialogueVoiceRefs?.[key];
+        setOfflineVoiceBusyId(`${turn.id}-${key}`);
         try {
-            const emotion = offlineToneForText(text);
-            const blob = await synthesizeSpeech(text, config, { emotion: emotion === "开心" ? "happy" : emotion === "悲伤" ? "sad" : emotion === "生气" ? "angry" : emotion === "惊讶" ? "surprised" : "neutral" });
+            if (cachedRef) {
+                const cached = await loadMediaBlob(cachedRef);
+                if (cached) {
+                    await playAudioBlobViaMediaElement(cached.blob).promise;
+                    return;
+                }
+            }
+            showChatToast("暂无缓存语音，请长按语音按钮生成");
+        } finally { setOfflineVoiceBusyId(null); }
+    };
+
+    const generateOfflineDialogueVoice = async () => {
+        if (!offlineVoiceConfirm || offlineVoiceBusyId) return;
+        const { turnId, key, text, tone } = offlineVoiceConfirm;
+        const config = resolveVoiceConfig(session.contactId, session.isGroup ? "group_chat" : "chat");
+        if (!config || !config.enableTTS) { setOfflineVoiceConfirm(null); showChatToast("请先配置并启用语音合成"); return; }
+        setOfflineVoiceConfirm(null);
+        setOfflineVoiceBusyId(`${turnId}-${key}`);
+        try {
+            const requestedTone = tone?.trim() || offlineToneForText(text);
+            const emotion = /开心|高兴|快乐|兴奋|喜悦|happy/i.test(requestedTone) ? "happy"
+                : /悲伤|难过|哭|失落|sad/i.test(requestedTone) ? "sad"
+                    : /生气|愤怒|恼怒|angry/i.test(requestedTone) ? "angry"
+                        : /惊讶|震惊|惊奇|surpris/i.test(requestedTone) ? "surprised"
+                            : /恐惧|害怕|fear/i.test(requestedTone) ? "fearful"
+                                : /厌恶|恶心|disgust/i.test(requestedTone) ? "disgusted"
+                                    : /平静|冷静|calm/i.test(requestedTone) ? "calm"
+                                        : "neutral";
+            const blob = await synthesizeSpeech(text, config, { emotion });
             if (!blob) throw new Error("未返回音频");
+            const ref = await storeMediaBlob(blob, blob.type || "audio/mpeg", "audio");
+            const turn = offlineTurns.find(item => item.id === turnId);
+            if (turn) {
+                const updated = updateChatOfflineTurn(session.id, turnId, {
+                    dialogueVoiceRefs: { ...(turn.dialogueVoiceRefs || {}), [key]: ref },
+                    dialogueToneLabels: { ...(turn.dialogueToneLabels || {}), [key]: requestedTone },
+                });
+                if (updated) setOfflineTurns(prev => prev.map(item => item.id === updated.id ? updated : item));
+            }
             await playAudioBlobViaMediaElement(blob).promise;
         } catch (error) {
             showChatToast(`语音生成失败：${error instanceof Error ? error.message : String(error)}`, 3000);
@@ -4122,6 +4163,15 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     };
 
     const archivedTurnIds = useMemo(() => new Set(offlineChapters.flatMap(chapter => chapter.turnIds)), [offlineChapters]);
+
+    const unmergeOfflineChapter = async (chapter: ChatOfflineChapter) => {
+        const next = offlineChapters.filter(item => item.id !== chapter.id);
+        saveChatOfflineChapters(session.id, next);
+        setOfflineChapters(next);
+        setActiveOfflineChapterId(null);
+        setContextMenuAnchor(null);
+        showChatToast("已取消合并，原小节和摘要已恢复");
+    };
     const hasMoreOfflineTurns = visibleOfflineTurns.length < offlineTurns.length;
 
     const offlineDisplayByTurnId = useMemo(() => {
@@ -4170,6 +4220,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         setActiveOfflineTarget(null);
         setEditingOfflineTarget({ turnId: turn.id, role });
         setEditingOfflineContent(role === "user" ? turn.userContent : formatOfflineTurnXml(turn));
+        setEditingOfflineTone(role === "user" ? "" : Object.values(turn.dialogueToneLabels || {})[0] || offlineToneForText(turn.assistantContent));
     };
 
     const toggleOfflineMode = () => {
@@ -4316,6 +4367,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             if (updated) setOfflineTurns(prev => prev.map(item => item.id === updated.id ? updated : item));
             setEditingOfflineTarget(null);
             setEditingOfflineContent("");
+            setEditingOfflineTone("");
             return;
         }
 
@@ -4332,6 +4384,14 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         const editedThinking = turn.thinkingText !== undefined
             ? (extractThinkingTag(nextContent, turn.thinkingTag) || undefined)
             : undefined;
+        const dialogueTone = editingOfflineTone.trim();
+        const dialogueToneLabels = Object.fromEntries(
+            dialogueParts(assistantContent)
+                .map((part, index) => part.dialogue
+                    ? [String(index), dialogueTone || offlineToneForText(part.text)]
+                    : null)
+                .filter((entry): entry is [string, string] => Boolean(entry))
+        );
         const updated = updateChatOfflineTurn(session.id, turn.id, {
             assistantContent,
             summary: parsed.summary.trim(),
@@ -4339,6 +4399,9 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             rawText: parsed.rawText,
             thinkingText: editedThinking,
             thinkingTag: editedThinking !== undefined ? turn.thinkingTag : undefined,
+            // 正文编辑后旧音频可能对应旧文本，必须重新生成，避免播放过期缓存。
+            dialogueVoiceRefs: undefined,
+            dialogueToneLabels,
         });
         if (updated) setOfflineTurns(prev => prev.map(item => item.id === updated.id ? updated : item));
         setEditingOfflineTarget(null);
@@ -4924,6 +4987,16 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             deleteChatMessagesFrom(msgId);
             syncMessagesFromStorage();
         });
+    };
+
+    const renderOfflineChapterContextMenu = (chapter: ChatOfflineChapter) => {
+        const menu = (
+            <div onPointerDown={e => e.stopPropagation()} ref={positionFloatingContextMenu} style={getContextMenuInitialStyle()} className="ctx-menu chat-floating-ctx-menu flex py-[6px] px-0">
+                <button type="button" className="ctx-menu-btn ctx-menu-btn-danger" onClick={() => { void unmergeOfflineChapter(chapter); }}>取消合并</button>
+                <div data-menu-triangle className="ctx-menu-triangle absolute -top-[6px] w-0 h-0" />
+            </div>
+        );
+        return wrapperRef.current ? createPortal(menu, wrapperRef.current) : menu;
     };
 
     const renderOfflineContextMenu = (turn: ChatOfflineTurn, role: OfflineActionTarget["role"]) => {
@@ -6165,7 +6238,35 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                     });
                                 }}
                             >
-                                <summary>大章节 · {chapter.title}</summary>
+                                <summary
+                                    onPointerDown={e => {
+                                        if (e.pointerType === "mouse" && e.button !== 0) return;
+                                        offlineChapterLongPressedRef.current = false;
+                                        if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
+                                        offlineVoiceLongPressRef.current = setTimeout(() => {
+                                            offlineChapterLongPressedRef.current = true;
+                                            const rect = e.currentTarget.getBoundingClientRect();
+                                            setActiveOfflineChapterId(chapter.id);
+                                            setContextMenuAnchor({ x: rect.left + rect.width / 2, y: rect.bottom });
+                                        }, 500);
+                                    }}
+                                    onPointerUp={e => {
+                                        if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
+                                        offlineVoiceLongPressRef.current = null;
+                                        if (offlineChapterLongPressedRef.current) {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            offlineChapterLongPressedRef.current = false;
+                                        }
+                                    }}
+                                    onPointerLeave={() => {
+                                        if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
+                                        offlineVoiceLongPressRef.current = null;
+                                        offlineChapterLongPressedRef.current = false;
+                                    }}
+                                    onContextMenu={e => { e.preventDefault(); const rect = e.currentTarget.getBoundingClientRect(); setActiveOfflineChapterId(chapter.id); setContextMenuAnchor({ x: rect.left + rect.width / 2, y: rect.bottom }); }}
+                                >大章节 · {chapter.title}</summary>
+                                {activeOfflineChapterId === chapter.id && renderOfflineChapterContextMenu(chapter)}
                                 <div className="chat-offline-summary-content">
                                     <BilingualTextBlock text={chapter.content} mode="markdown" defaultExpanded />
                                 </div>
@@ -6300,10 +6401,38 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                                         <button
                                                             type="button"
                                                             className="chat-offline-voice-btn"
-                                                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); void playOfflineDialogueVoice(part.text, `${turn.id}-${index}`); }}
+                                                            onPointerDown={e => {
+                                                                e.stopPropagation();
+                                                                if (e.pointerType === "mouse" && e.button !== 0) return;
+                                                                offlineVoiceLongPressedRef.current = false;
+                                                                offlineVoiceLongPressRef.current = setTimeout(() => {
+                                                                    offlineVoiceLongPressedRef.current = true;
+                                                                    setOfflineVoiceConfirm({ turnId: turn.id, key: `${index}`, text: part.text, tone: turn.dialogueToneLabels?.[`${index}`] || offlineToneForText(part.text) });
+                                                                }, 500);
+                                                            }}
+                                                            onPointerUp={e => {
+                                                                e.stopPropagation();
+                                                                if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
+                                                                offlineVoiceLongPressRef.current = null;
+                                                                if (!offlineVoiceLongPressedRef.current && (e.pointerType !== "mouse" || e.button === 0)) {
+                                                                    if (offlineVoiceBusyId !== `${turn.id}-${index}`) void playOfflineDialogueVoice(turn, part.text, `${index}`);
+                                                                }
+                                                                offlineVoiceLongPressedRef.current = false;
+                                                            }}
+                                                            onPointerLeave={() => {
+                                                                if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
+                                                                offlineVoiceLongPressRef.current = null;
+                                                                offlineVoiceLongPressedRef.current = false;
+                                                            }}
+                                                            onPointerCancel={() => {
+                                                                if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
+                                                                offlineVoiceLongPressRef.current = null;
+                                                                offlineVoiceLongPressedRef.current = false;
+                                                            }}
+                                                            onContextMenu={e => { e.preventDefault(); setOfflineVoiceConfirm({ turnId: turn.id, key: `${index}`, text: part.text, tone: turn.dialogueToneLabels?.[`${index}`] || offlineToneForText(part.text) }); }}
                                                             disabled={offlineVoiceBusyId === `${turn.id}-${index}`}
-                                                            aria-label="生成并播放这段对白"
-                                                            title="生成并播放这段对白"
+                                                            aria-label="播放这段对白，长按重新生成"
+                                                            title="播放缓存语音；长按重新生成"
                                                         >
                                                             {offlineVoiceBusyId === `${turn.id}-${index}` ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
                                                         </button>
@@ -7299,8 +7428,21 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 />
             )}
 
+            {offlineVoiceConfirm && (
+                <div className="chat-html-overlay" onClick={() => setOfflineVoiceConfirm(null)}>
+                    <div className="g-card w-[min(84vw,360px)] p-4 flex flex-col gap-3" onClick={e => e.stopPropagation()}>
+                        <div className="menu-label">生成线下语音？</div>
+                        <div className="menu-desc">将按“{offlineVoiceConfirm.tone || offlineToneForText(offlineVoiceConfirm.text)}”语气生成并缓存这段对白。重新生成会替换原缓存。</div>
+                        <div className="flex justify-end gap-2">
+                            <button type="button" className="ui-btn ui-btn-outline" onClick={() => setOfflineVoiceConfirm(null)}>取消</button>
+                            <button type="button" className="ui-btn ui-btn-primary" onClick={() => void generateOfflineDialogueVoice()}>确认生成</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {editingOfflineTarget && (
-                <div className="chat-html-overlay" onClick={() => { setEditingOfflineTarget(null); setEditingOfflineContent(""); }}>
+                <div className="chat-html-overlay" onClick={() => { setEditingOfflineTarget(null); setEditingOfflineContent(""); setEditingOfflineTone(""); }}>
                     <div
                         className="g-card w-[min(84vw,420px)] max-h-[78vh] p-4 flex flex-col gap-3"
                         onClick={(e) => e.stopPropagation()}
@@ -7317,11 +7459,19 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                 </span>
                             </div>
                             <button
-                                onClick={() => { setEditingOfflineTarget(null); setEditingOfflineContent(""); }}
+                                onClick={() => { setEditingOfflineTarget(null); setEditingOfflineContent(""); setEditingOfflineTone(""); }}
                                 className="ui-bare-btn text-[var(--c-icon)] ts-18 leading-none"
                                 type="button"
                             >✕</button>
                         </div>
+                        {editingOfflineTarget.role === "assistant" && (
+                            <input
+                                value={editingOfflineTone}
+                                onChange={e => setEditingOfflineTone(e.target.value)}
+                                placeholder="TTS 语气标签（仅用于生成语音，不显示在正文）"
+                                className="w-full rounded-xl border border-[var(--c-border)] bg-[var(--c-input)] px-3 py-2 ts-13 text-[var(--c-text)] outline-none"
+                            />
+                        )}
                         <textarea
                             autoFocus
                             value={editingOfflineContent}

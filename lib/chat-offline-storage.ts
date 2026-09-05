@@ -18,6 +18,8 @@ export type ChatOfflineTurn = {
     reasoningText?: string; // 模型思维链（reasoning/CoT）内容
     thinkingText?: string; // 预设格式 <thinking> 标签解析出的思维链（展示优先于 reasoningText）
     thinkingTag?: string; // 实际用于提取思维链的标签名（preset.thinking_tag 或默认 thinking）
+    dialogueVoiceRefs?: Record<string, string>;
+    dialogueToneLabels?: Record<string, string>;
     createdAt: string;
 };
 
@@ -101,6 +103,8 @@ function normalizeTurn(value: unknown): ChatOfflineTurn | null {
         reasoningText: typeof item.reasoningText === "string" ? item.reasoningText : undefined,
         thinkingText: typeof item.thinkingText === "string" ? item.thinkingText : undefined,
         thinkingTag: typeof item.thinkingTag === "string" ? item.thinkingTag : undefined,
+        dialogueVoiceRefs: item.dialogueVoiceRefs && typeof item.dialogueVoiceRefs === "object" ? Object.fromEntries(Object.entries(item.dialogueVoiceRefs).filter((entry): entry is [string, string] => typeof entry[1] === "string")) : undefined,
+        dialogueToneLabels: item.dialogueToneLabels && typeof item.dialogueToneLabels === "object" ? Object.fromEntries(Object.entries(item.dialogueToneLabels).filter((entry): entry is [string, string] => typeof entry[1] === "string")) : undefined,
         createdAt: item.createdAt,
     };
 }
@@ -141,6 +145,8 @@ export function appendChatOfflineTurn(input: {
     reasoningText?: string;
     thinkingText?: string;
     thinkingTag?: string;
+    dialogueVoiceRefs?: Record<string, string>;
+    dialogueToneLabels?: Record<string, string>;
 }): ChatOfflineTurn {
     const turn: ChatOfflineTurn = {
         id: createTurnId(),
@@ -153,6 +159,8 @@ export function appendChatOfflineTurn(input: {
         reasoningText: input.reasoningText,
         thinkingText: input.thinkingText,
         thinkingTag: input.thinkingTag,
+        dialogueVoiceRefs: input.dialogueVoiceRefs,
+        dialogueToneLabels: input.dialogueToneLabels,
         createdAt: new Date().toISOString(),
     };
     saveChatOfflineTurns(input.sessionId, [...loadChatOfflineTurns(input.sessionId), turn]);
@@ -162,7 +170,7 @@ export function appendChatOfflineTurn(input: {
 export function updateChatOfflineTurn(
     sessionId: string,
     turnId: string,
-    patch: Partial<Pick<ChatOfflineTurn, "userContent" | "assistantContent" | "summary" | "summaryTag" | "rawText" | "reasoningText" | "thinkingText" | "thinkingTag">>,
+    patch: Partial<Pick<ChatOfflineTurn, "userContent" | "assistantContent" | "summary" | "summaryTag" | "rawText" | "reasoningText" | "thinkingText" | "thinkingTag" | "dialogueVoiceRefs" | "dialogueToneLabels">>,
 ): ChatOfflineTurn | null {
     let updated: ChatOfflineTurn | null = null;
     const turns = loadChatOfflineTurns(sessionId).map((turn) => {
