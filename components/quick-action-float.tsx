@@ -360,7 +360,7 @@ export function QuickActionFloat() {
                 onPointerUp={handleFloatingPointerEnd}
                 onPointerCancel={handleFloatingPointerEnd}
                 onClick={handleFloatingButtonClick}
-                style={{ ...(floatingPosition ? { left: floatingPosition.left, top: floatingPosition.top } : {}), background: "rgba(221,242,226,.94)", color: "#346a49", border: "2px solid #4c8963", boxShadow: "0 3px 12px rgba(22,65,39,.25)" }}
+                style={{ ...(floatingPosition ? { left: floatingPosition.left, top: floatingPosition.top } : {}), background: "#E5EFD7", color: "#36563b", border: "2px solid #6f8f68", boxShadow: "0 4px 14px rgba(54,86,59,.30), inset 0 1px 0 rgba(255,255,255,.65)", transition: "transform 120ms ease, box-shadow 120ms ease" }}
             >
                 <PawPrint fill="currentColor" size={24} strokeWidth={1.9} />
             </button>
@@ -369,7 +369,7 @@ export function QuickActionFloat() {
                 <div
                     className="quick-action-popover"
                     data-positioned={popoverPosition ? "" : undefined}
-                    style={{ ...popoverStyle, background: "rgba(221, 242, 226, 0.88)", color: "#183c29", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", border: "2px solid #4c8963", boxShadow: "0 0 0 3px rgba(234,255,239,.7), 0 12px 36px rgba(22,65,39,.28)", boxSizing: "border-box", isolation: "isolate" }}
+                    style={{ ...popoverStyle, background: "#E5EFD7", color: "#36563b", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", border: "2px solid #6f8f68", boxShadow: "0 0 0 3px rgba(255,255,255,.80), 0 12px 36px rgba(54,86,59,.28), inset 0 1px 0 rgba(255,255,255,.72)", boxSizing: "border-box", isolation: "isolate" }}
                     role="dialog"
                     aria-label="快捷操作"
                     onClick={event => event.stopPropagation()}
@@ -402,8 +402,8 @@ export function QuickActionFloat() {
                             <button type="button" disabled={!apiEditor.model.trim()} onClick={applyEditor} style={{ padding: 12, borderRadius: 12, background: "#326547", color: "white", border: "2px solid #244e35", minHeight: 44 }}>确认应用并使用此配置</button>
                         </div>
                     )}
-                    <div className="quick-action-body" style={apiEditor ? { display: "none" } : undefined}>
-                        <div className="quick-action-tabs" role="tablist" aria-label="绑定范围">
+                    <div className="quick-action-body" style={{ ...(apiEditor ? { display: "none" } : {}), padding: 12 }}>
+                        <div className="quick-action-tabs" style={{ gap: 8 }} role="tablist" aria-label="绑定范围">
                             <button
                                 type="button"
                                 data-active={scope === "global"}
@@ -448,7 +448,7 @@ export function QuickActionFloat() {
                             <div className="quick-action-option-list">
                                 <button
                                     type="button"
-                                    className="quick-action-option"
+                                    className="quick-action-option" style={{ background: "rgba(255,255,255,.72)", border: "1px solid #91a987", borderRadius: 10, boxShadow: "0 2px 5px rgba(54,86,59,.12)" }}
                                     data-selected={!currentSlot.apiConfigId}
                                     disabled={characterDisabled}
                                     onClick={() => updateApiConfig(undefined)}
@@ -462,7 +462,7 @@ export function QuickActionFloat() {
                                     <button
                                         type="button"
                                         key={api.id}
-                                        className="quick-action-option"
+                                        className="quick-action-option" style={{ background: "rgba(255,255,255,.72)", border: "1px solid #91a987", borderRadius: 10, boxShadow: "0 2px 5px rgba(54,86,59,.12)" }}
                                         data-selected={currentSlot.apiConfigId === api.id}
                                         disabled={characterDisabled}
                                         onClick={() => {
@@ -512,7 +512,7 @@ export function QuickActionFloat() {
                                             <button
                                                 type="button"
                                                 key={book.id}
-                                                className="quick-action-chip"
+                                                className="quick-action-chip" style={{ background: "rgba(255,255,255,.72)", border: "1px solid #91a987", borderRadius: 10, boxShadow: "0 2px 5px rgba(54,86,59,.12)" }}
                                                 data-selected={selected}
                                                 disabled={characterDisabled}
                                                 onClick={() => toggleWorldBook(book.id)}
