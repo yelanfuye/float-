@@ -212,15 +212,8 @@ async function synthesizeElevenLabs(text: string, config: VoiceApiConfig): Promi
         text,
         model_id: modelId,
     };
-    // Preserve v3 baseline unless the user explicitly enables this compatibility test.
-    // These experimental values are not assumed to be accepted by every endpoint.
-    if (isElevenV3 && config.elevenV3ExpressionExperiment === true) {
-        requestBody.voice_settings = {
-            stability: 0.4,
-            similarity_boost: 0.75,
-            style: 0.3,
-        };
-    } else if (!isElevenV3) {
+    // v3 uses the baseline request and speech-script audio directions.
+    if (!isElevenV3) {
         requestBody.voice_settings = {
             stability: clampUnit(config.elevenStability, 0.5),
             similarity_boost: clampUnit(config.elevenSimilarityBoost, 0.75),

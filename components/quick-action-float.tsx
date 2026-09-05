@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type CSSProperties } from "react";
-import { BookOpen, Check, ChevronDown, Code2, SlidersHorizontal, UserRound, X } from "lucide-react";
+import { BookOpen, Check, ChevronDown, Code2, PawPrint, UserRound, X } from "lucide-react";
+import { determineBaseUrl } from "@/lib/api-helpers";
 import { CHAT_APP_SETTINGS_UPDATED_EVENT, loadChatAppSettings } from "@/lib/chat-storage";
 import {
     getCharacterBinding,
     loadApiConfigs,
+    saveApiConfigs,
     loadBindingConfig,
     loadWorldBooks,
     saveBindingConfig,
@@ -62,6 +64,71 @@ export function QuickActionFloat() {
     const floatingButtonRef = useRef<HTMLButtonElement | null>(null);
     const floatingDragRef = useRef<FloatingDragState | null>(null);
     const suppressFloatingClickRef = useRef(false);
+    const [apiEditor, setApiEditor] = useState<{ id: string; scope: QuickScope; characterId: string; model: string } | null>(null);
+    const [modelChoices, setModelChoices] = useState<string[]>([]);
+    const [modelError, setModelError] = useState("");
+    const [modelsBusy, setModelsBusy] = useState(false);
+    const modelRequestRef = useRef<AbortController | null>(null);
+    const cancelModelRequest = () => { modelRequestRef.current?.abort(); modelRequestRef.current = null; setModelsBusy(false); };
+    useEffect(() => {
+        if (!open) { modelRequestRef.current?.abort(); modelRequestRef.current = null; setModelsBusy(false); setApiEditor(null); }
+    }, [open]);
+    useEffect(() => () => { modelRequestRef.current?.abort(); }, []);
+
+    const fetchEditorModels = async () => {
+        if (!apiEditor) return;
+        cancelModelRequest();
+        const api = loadApiConfigs().find(item => item.id === apiEditor.id);
+        if (!api) { setModelError("配置已删除"); return; }
+        const base = determineBaseUrl(api)?.replace(/\/$/, "").replace(/\/(chat\/completions|completions|embeddings|messages)$/i, "");
+        if (!base || !api.apiKey.trim()) { setModelError("请先在设置中填写接口地址和密钥"); return; }
+        const controller = new AbortController();
+        modelRequestRef.current = controller;
+        setModelsBusy(true); setModelError("");
+        const timer = window.setTimeout(() => controller.abort(), 20000);
+        try {
+            const url = new URL(/\/models$/i.test(base) ? base : `${base}/models`);
+            const headers: Record<string, string> = { Accept: "application/json" };
+            if (api.provider === "Google") headers["x-goog-api-key"] = api.apiKey.trim();
+            else if (api.provider === "Anthropic" && !api.baseUrl) {
+                headers["x-api-key"] = api.apiKey.trim();
+                headers["anthropic-version"] = "2023-06-01";
+                headers["anthropic-dangerous-direct-browser-access"] = "true";
+            } else headers.Authorization = `Bearer ${api.apiKey.trim()}`;
+            const response = await fetch(url.toString(), { headers, signal: controller.signal });
+            if (!response.ok) throw new Error(`拉取失败 HTTP ${response.status}`);
+            const data = await response.json();
+            const rows: unknown[] = Array.isArray(data.models) ? data.models : Array.isArray(data.data) ? data.data : [];
+            const names = rows.flatMap(item => {
+                if (!item || typeof item !== "object") return [];
+                const record = item as Record<string, unknown>;
+                const id = api.provider === "Google" ? record.name : record.id;
+                return typeof id === "string" && id.trim() ? [id.replace(/^models\//, "").trim()] : [];
+            });
+            if (!names.length) throw new Error("没有返回可用模型，可手动填写模型 ID");
+            if (modelRequestRef.current === controller) setModelChoices([...new Set(names)]);
+        } catch (error: unknown) {
+            if (modelRequestRef.current === controller) setModelError(controller.signal.aborted ? "拉取已超时，请重试或手动输入" : error instanceof Error ? error.message : String(error));
+        } finally {
+            window.clearTimeout(timer);
+            if (modelRequestRef.current === controller) { modelRequestRef.current = null; setModelsBusy(false); }
+        }
+    };
+
+    const applyEditor = () => {
+        if (!apiEditor || !apiEditor.model.trim()) { setModelError("请选择或输入模型"); return; }
+        const apis = loadApiConfigs();
+        if (!apis.some(api => api.id === apiEditor.id)) { setModelError("该配置已删除"); return; }
+        if (apiEditor.scope === "character" && !loadCharacters().some(item => item.id === apiEditor.characterId)) { setModelError("角色已删除"); return; }
+        const nextApis = apis.map(api => api.id === apiEditor.id ? { ...api, defaultModel: apiEditor.model.trim() } : api);
+        const latest = loadBindingConfig();
+        const next = apiEditor.scope === "global"
+            ? { ...latest, globalDefaults: { ...latest.globalDefaults, apiConfigId: apiEditor.id } }
+            : setCharacterBinding(latest, { ...getCharacterBinding(latest, apiEditor.characterId), defaults: { ...getCharacterBinding(latest, apiEditor.characterId).defaults, apiConfigId: apiEditor.id } });
+        saveApiConfigs(nextApis); saveBindingConfig(next);
+        setApiConfigs(nextApis); setConfig(next);
+        cancelModelRequest(); setApiEditor(null);
+    };
 
     const reloadData = useCallback(() => {
         const nextCharacters = loadCharacters();
@@ -293,23 +360,23 @@ export function QuickActionFloat() {
                 onPointerUp={handleFloatingPointerEnd}
                 onPointerCancel={handleFloatingPointerEnd}
                 onClick={handleFloatingButtonClick}
-                style={floatingPosition ? { left: floatingPosition.left, top: floatingPosition.top } : undefined}
+                style={{ ...(floatingPosition ? { left: floatingPosition.left, top: floatingPosition.top } : {}), background: "rgba(221,242,226,.94)", color: "#346a49", border: "2px solid #4c8963", boxShadow: "0 3px 12px rgba(22,65,39,.25)" }}
             >
-                <SlidersHorizontal size={24} strokeWidth={1.9} />
+                <PawPrint fill="currentColor" size={24} strokeWidth={1.9} />
             </button>
 
             {open ? (
                 <div
                     className="quick-action-popover"
                     data-positioned={popoverPosition ? "" : undefined}
-                    style={popoverStyle}
+                    style={{ ...popoverStyle, background: "rgba(221, 242, 226, 0.88)", color: "#183c29", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", border: "2px solid #4c8963", boxShadow: "0 0 0 3px rgba(234,255,239,.7), 0 12px 36px rgba(22,65,39,.28)", boxSizing: "border-box", isolation: "isolate" }}
                     role="dialog"
                     aria-label="快捷操作"
                     onClick={event => event.stopPropagation()}
                 >
                     <div className="quick-action-header">
                         <div className="quick-action-title">
-                            <span className="quick-action-title-icon"><SlidersHorizontal size={18} /></span>
+                            <span className="quick-action-title-icon"><PawPrint fill="currentColor" size={18} /></span>
                             <div>
                                 <h3>快捷操作</h3>
                                 <p>{scope === "global" ? "全局默认" : selectedCharacter?.name || "角色默认"}</p>
@@ -320,7 +387,22 @@ export function QuickActionFloat() {
                         </button>
                     </div>
 
-                    <div className="quick-action-body">
+                    {apiEditor && (
+                        <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12, overflowY: "auto", maxHeight: "65vh" }}>
+                            <button type="button" className="ui-btn" onClick={() => { cancelModelRequest(); setApiEditor(null); }}>← 返回，不保存</button>
+                            <strong>{apiConfigs.find(api => api.id === apiEditor.id)?.name || "API 模型设置"}</strong>
+                            <small>应用范围：{apiEditor.scope === "global" ? "全局默认" : characters.find(c => c.id === apiEditor.characterId)?.name || "角色默认"}。修改模型会影响所有使用此 API 配置的地方；应用级单独绑定仍优先。</small>
+                            <button type="button" className="ui-btn" disabled={modelsBusy} onClick={() => void fetchEditorModels()}>{modelsBusy ? "正在拉取模型…" : "拉取模型列表"}</button>
+                            {modelChoices.length > 0 && <select aria-label="模型列表" className="ui-select" value={apiEditor.model} onChange={event => setApiEditor({ ...apiEditor, model: event.target.value })}>
+                                {!modelChoices.includes(apiEditor.model) && <option value={apiEditor.model}>{apiEditor.model || "请选择模型"}</option>}
+                                {modelChoices.map(model => <option key={model} value={model}>{model}</option>)}
+                            </select>}
+                            <label>模型 ID（也可手动输入）<input className="ui-input" value={apiEditor.model} onChange={event => setApiEditor({ ...apiEditor, model: event.target.value })} /></label>
+                            {modelError && <div role="alert" style={{ color: "#a11", overflowWrap: "anywhere" }}>{modelError}</div>}
+                            <button type="button" disabled={!apiEditor.model.trim()} onClick={applyEditor} style={{ padding: 12, borderRadius: 12, background: "#326547", color: "white", border: "2px solid #244e35", minHeight: 44 }}>确认应用并使用此配置</button>
+                        </div>
+                    )}
+                    <div className="quick-action-body" style={apiEditor ? { display: "none" } : undefined}>
                         <div className="quick-action-tabs" role="tablist" aria-label="绑定范围">
                             <button
                                 type="button"
@@ -383,9 +465,15 @@ export function QuickActionFloat() {
                                         className="quick-action-option"
                                         data-selected={currentSlot.apiConfigId === api.id}
                                         disabled={characterDisabled}
-                                        onClick={() => updateApiConfig(api.id)}
+                                        onClick={() => {
+                                            cancelModelRequest(); setModelError(""); setModelChoices([]);
+                                            setApiEditor({ id: api.id, scope, characterId: selectedCharId, model: api.defaultModel || "" });
+                                        }}
                                     >
-                                        <span>{api.name || api.defaultModel || api.provider}</span>
+                                        <span style={{ display: "flex", flexDirection: "column", minWidth: 0, textAlign: "left" }}>
+                                            <span>{api.name || api.provider}</span>
+                                            <small style={{ overflowWrap: "anywhere", opacity: .75 }}>{api.defaultModel || "未选择模型"} · 点击配置</small>
+                                        </span>
                                         {currentSlot.apiConfigId === api.id ? <Check size={15} /> : null}
                                     </button>
                                 ))}

@@ -553,21 +553,21 @@ export function VoiceSettings() {
             } else if (config.provider === "OpenAI") {
                 setFetchedVoices(prev => ({ ...prev, [config.id]: DEFAULT_OPENAI_VOICES }));
             } else if (config.provider === "ElevenLabs") {
-                if (!config.apiKey.trim()) throw new Error("填写 API Key 后可同步 ElevenLabs 模型列表");
+                if (!config.apiKey.trim()) throw new Error("填写 API Key 后可同步 ElevenLabs 我的声音列表");
                 const apiKey = config.apiKey.trim()
                     .replace(/^['\"]|['\"]$/g, "")
                     .replace(/^Bearer\s+/i, "")
                     .replace(/^xi-api-key\s*:\s*/i, "")
                     .replace(/^['\"]|['\"]$/g, "")
                     .trim();
-                if (!apiKey) throw new Error("填写 API Key 后可同步 ElevenLabs 模型列表");
+                if (!apiKey) throw new Error("填写 API Key 后可同步 ElevenLabs 我的声音列表");
                 const rawBase = (config.baseUrl?.trim() || "https://api.elevenlabs.io/v1").replace(/\/$/, "");
                 const baseUrl = /^https:\/\/api\.elevenlabs\.io$/i.test(rawBase) ? `${rawBase}/v1` : rawBase;
                 const controller = new AbortController();
                 const timer = window.setTimeout(() => controller.abort(), 15000);
                 let data: unknown;
                 try {
-                    const response = await fetch(`${baseUrl}/models`, {
+                    const response = await fetch(`${baseUrl}/voices`, {
                         method: "GET",
                         headers: { "xi-api-key": apiKey, Accept: "application/json" },
                         signal: controller.signal,
@@ -585,25 +585,26 @@ export function VoiceSettings() {
                     }
                 } catch (error: unknown) {
                     if (error instanceof DOMException && error.name === "AbortError") {
-                        throw new Error("同步模型超时（15 秒），请检查网络或接口地址");
+                        throw new Error("同步音色超时（15 秒），请检查网络或接口地址");
                     }
                     throw error;
                 } finally {
                     window.clearTimeout(timer);
                 }
-                // Official /models returns an array, not the proxy's { models } wrapper.
-                const rawModels = Array.isArray(data) ? data
-                    : data && typeof data === "object" && Array.isArray((data as Record<string, unknown>).models)
-                        ? (data as { models: unknown[] }).models : [];
-                const nextModels = uniqueOptions(rawModels.flatMap((item): VoiceOption[] => {
+                if (!data || typeof data !== "object" || !Array.isArray((data as Record<string, unknown>).voices)) {
+                    throw new Error("接口未返回 voices 音色列表，请确认支持 ElevenLabs /voices");
+                }
+                const voices = uniqueOptions((data as { voices: unknown[] }).voices.flatMap((item): VoiceOption[] => {
                     if (!item || typeof item !== "object") return [];
-                    const model = item as Record<string, unknown>;
-                    const id = model.model_id ?? model.id;
+                    const voice = item as Record<string, unknown>;
+                    const id = voice.voice_id;
                     if (typeof id !== "string" || !id.trim()) return [];
-                    return [{ id: id.trim(), name: typeof model.name === "string" && model.name.trim() ? model.name.trim() : id.trim() }];
+                    return [{ id: id.trim(), name: typeof voice.name === "string" && voice.name.trim() ? voice.name.trim() : id.trim() }];
                 }));
-                if (nextModels.length === 0) throw new Error("接口未返回可用模型");
-                setFetchedModels(prev => ({ ...prev, [config.id]: nextModels }));
+                setFetchedVoices(prev => ({ ...prev, [config.id]: voices }));
+                // Keep manual entries; syncing never silently changes the selected voice.
+                updateConfig(config.id, { customVoices: uniqueOptions([...voices, ...(config.customVoices || [])]) });
+                if (!voices.length) setFetchError(prev => ({ ...prev, [config.id]: "账户未返回音色；已保留现有音色，可手动填写 Voice ID" }));
             } else {
                 throw new Error("该服务商暂不支持拉取模型列表");
             }
@@ -852,34 +853,7 @@ export function VoiceSettings() {
                                         {config.provider === "ElevenLabs" && (
                                             <>
                                                 {config.model?.toLowerCase() === "eleven_v3" ? (
-                                                    <>
-                                                        <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%" }}>
-                                                            <span className="menu-label font-medium">v3 表达参数实验</span>
-                                                            <button
-                                                                type="button"
-                                                                aria-pressed={config.elevenV3ExpressionExperiment === true}
-                                                                onClick={() => updateConfig(config.id, { elevenV3ExpressionExperiment: config.elevenV3ExpressionExperiment !== true })}
-                                                                style={{
-                                                                    display: "block", width: "100%", minHeight: 48,
-                                                                    padding: "12px 16px", border: "2px solid #334155",
-                                                                    borderRadius: 12, fontSize: 14, fontWeight: 700,
-                                                                    lineHeight: 1.5, cursor: "pointer", whiteSpace: "normal",
-                                                                    backgroundColor: config.elevenV3ExpressionExperiment === true ? "#1e3a8a" : "#ffffff",
-                                                                    color: config.elevenV3ExpressionExperiment === true ? "#ffffff" : "#111827",
-                                                                }}
-                                                            >
-                                                                {config.elevenV3ExpressionExperiment === true
-                                                                    ? "已开启实验参数 · 点击关闭，恢复基线"
-                                                                    : "已关闭实验参数 · 点击开启对照测试"}
-                                                            </button>
-                                                        </div>
-                                                        <div className="menu-desc ml-1">
-                                                            默认关闭：不发送 voice_settings，保持原有请求。开启：仅发送 stability=0.4、similarity_boost=0.75、style=0.3，测试接口兼容性与表达效果；不额外发送 Speaker Boost 或速度参数，不添加情绪标签。
-                                                        </div>
-                                                        <div className="menu-desc ml-1">
-                                                            此开关对使用本配置的新生成语音生效，试听会消耗额度。请用相同音色、文本对照；如出现参数错误请关闭并保留错误信息，不会自动重试。返回成功不代表每个参数都生效。
-                                                        </div>
-                                                    </>
+                                                    <div className="menu-desc ml-1">v3 使用语音文本中的音频标签编排表达。临时参数实验已移除；现有音频不会自动重新生成。</div>
                                                 ) : (
                                                     <>
                                                     {([
@@ -1093,7 +1067,7 @@ export function VoiceSettings() {
                                                         className="ui-btn ui-btn ui-btn-soft-action w-full"
                                                     >
                                                         <RefreshCw size={16} className={isFetching[config.id] ? "animate-spin" : ""} />
-                                                        {isFetching[config.id] ? "同步中..." : config.provider === "Minimax" ? "同步音色列表" : config.provider === "ElevenLabs" ? "同步模型列表" : "显示默认音色"}
+                                                        {isFetching[config.id] ? "同步中..." : config.provider === "Minimax" ? "同步音色列表" : config.provider === "ElevenLabs" ? "同步我的声音" : "显示默认音色"}
                                                     </button>
                                                     {config.provider === "Minimax" && (
                                                         <button
