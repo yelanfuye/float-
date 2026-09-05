@@ -554,19 +554,54 @@ export function VoiceSettings() {
                 setFetchedVoices(prev => ({ ...prev, [config.id]: DEFAULT_OPENAI_VOICES }));
             } else if (config.provider === "ElevenLabs") {
                 if (!config.apiKey.trim()) throw new Error("填写 API Key 后可同步 ElevenLabs 模型列表");
-                const response = await fetch("/api/voice/elevenlabs-models", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        apiKey: config.apiKey,
-                        baseUrl: config.baseUrl || "https://api.elevenlabs.io/v1",
-                    }),
-                });
-                const data = await response.json().catch(() => ({}));
-                if (!response.ok) {
-                    throw new Error(data.message || data.error || `同步模型失败 (${response.status})`);
+                const apiKey = config.apiKey.trim()
+                    .replace(/^['\"]|['\"]$/g, "")
+                    .replace(/^Bearer\s+/i, "")
+                    .replace(/^xi-api-key\s*:\s*/i, "")
+                    .replace(/^['\"]|['\"]$/g, "")
+                    .trim();
+                if (!apiKey) throw new Error("填写 API Key 后可同步 ElevenLabs 模型列表");
+                const rawBase = (config.baseUrl?.trim() || "https://api.elevenlabs.io/v1").replace(/\/$/, "");
+                const baseUrl = /^https:\/\/api\.elevenlabs\.io$/i.test(rawBase) ? `${rawBase}/v1` : rawBase;
+                const controller = new AbortController();
+                const timer = window.setTimeout(() => controller.abort(), 15000);
+                let data: unknown;
+                try {
+                    const response = await fetch(`${baseUrl}/models`, {
+                        method: "GET",
+                        headers: { "xi-api-key": apiKey, Accept: "application/json" },
+                        signal: controller.signal,
+                    });
+                    const text = await response.text();
+                    try { data = JSON.parse(text); } catch {
+                        throw new Error(`模型接口返回非 JSON 内容（HTTP ${response.status}），请检查接口地址或访问限制`);
+                    }
+                    if (!response.ok) {
+                        const record = data && typeof data === "object" ? data as Record<string, unknown> : {};
+                        const detail = record.detail;
+                        const message = detail && typeof detail === "object"
+                            ? (detail as Record<string, unknown>).message : detail;
+                        throw new Error(`模型直连接口 HTTP ${response.status}：${String(message || record.message || record.error || text).slice(0, 500)}`);
+                    }
+                } catch (error: unknown) {
+                    if (error instanceof DOMException && error.name === "AbortError") {
+                        throw new Error("同步模型超时（15 秒），请检查网络或接口地址");
+                    }
+                    throw error;
+                } finally {
+                    window.clearTimeout(timer);
                 }
-                const nextModels = uniqueOptions(Array.isArray(data.models) ? data.models as VoiceOption[] : []);
+                // Official /models returns an array, not the proxy's { models } wrapper.
+                const rawModels = Array.isArray(data) ? data
+                    : data && typeof data === "object" && Array.isArray((data as Record<string, unknown>).models)
+                        ? (data as { models: unknown[] }).models : [];
+                const nextModels = uniqueOptions(rawModels.flatMap((item): VoiceOption[] => {
+                    if (!item || typeof item !== "object") return [];
+                    const model = item as Record<string, unknown>;
+                    const id = model.model_id ?? model.id;
+                    if (typeof id !== "string" || !id.trim()) return [];
+                    return [{ id: id.trim(), name: typeof model.name === "string" && model.name.trim() ? model.name.trim() : id.trim() }];
+                }));
                 if (nextModels.length === 0) throw new Error("接口未返回可用模型");
                 setFetchedModels(prev => ({ ...prev, [config.id]: nextModels }));
             } else {
