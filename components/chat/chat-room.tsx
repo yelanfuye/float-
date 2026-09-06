@@ -4100,7 +4100,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
 
     const dialogueParts = (text: string): Array<{ text: string; dialogue: boolean }> => {
         const parts: Array<{ text: string; dialogue: boolean }> = [];
-        const matcher = /[“「『][^”」』]+[”」』]/g;
+        // 只有中文双引号中的内容算对白；书名号、单引号及无引号描写不生成语音。
+        const matcher = /“[^”]*”/g;
         let cursor = 0;
         let match: RegExpExecArray | null;
         while ((match = matcher.exec(text)) !== null) {
@@ -4161,6 +4162,78 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             showChatToast(`语音生成失败：${error instanceof Error ? error.message : String(error)}`, 3000);
         } finally { setOfflineVoiceBusyId(null); }
     };
+
+    const buildOfflineDialogueToneLabels = (text: string): Record<string, string> => Object.fromEntries(
+        dialogueParts(text)
+            .map((part, index) => part.dialogue ? [String(index), offlineToneForText(part.text)] : null)
+            .filter((entry): entry is [string, string] => Boolean(entry))
+    );
+
+    const renderOfflineDialogueContent = (turn: ChatOfflineTurn, displayText: string) => (
+        <div className="chat-offline-dialogue-content">
+            {dialogueParts(displayText).map((part, index) => (
+                <span key={`${turn.id}-chapter-part-${index}`} className={part.dialogue ? "chat-offline-dialogue" : undefined}>
+                    <OfflineAssistantTextBlock
+                        text={part.text}
+                        defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                    />
+                    {part.dialogue && (
+                        <button
+                            type="button"
+                            className="chat-offline-voice-btn"
+                            onPointerDown={e => {
+                                e.stopPropagation();
+                                if (e.pointerType === "mouse" && e.button !== 0) return;
+                                offlineVoiceLongPressedRef.current = false;
+                                offlineVoiceLongPressRef.current = setTimeout(() => {
+                                    offlineVoiceLongPressedRef.current = true;
+                                    setOfflineVoiceConfirm({
+                                        turnId: turn.id,
+                                        key: `${index}`,
+                                        text: part.text,
+                                        tone: turn.dialogueToneLabels?.[`${index}`] || offlineToneForText(part.text),
+                                    });
+                                }, 500);
+                            }}
+                            onPointerUp={e => {
+                                e.stopPropagation();
+                                if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
+                                offlineVoiceLongPressRef.current = null;
+                                if (!offlineVoiceLongPressedRef.current && (e.pointerType !== "mouse" || e.button === 0)) {
+                                    if (offlineVoiceBusyId !== `${turn.id}-${index}`) void playOfflineDialogueVoice(turn, part.text, `${index}`);
+                                }
+                                offlineVoiceLongPressedRef.current = false;
+                            }}
+                            onPointerLeave={() => {
+                                if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
+                                offlineVoiceLongPressRef.current = null;
+                                offlineVoiceLongPressedRef.current = false;
+                            }}
+                            onPointerCancel={() => {
+                                if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
+                                offlineVoiceLongPressRef.current = null;
+                                offlineVoiceLongPressedRef.current = false;
+                            }}
+                            onContextMenu={e => {
+                                e.preventDefault();
+                                setOfflineVoiceConfirm({
+                                    turnId: turn.id,
+                                    key: `${index}`,
+                                    text: part.text,
+                                    tone: turn.dialogueToneLabels?.[`${index}`] || offlineToneForText(part.text),
+                                });
+                            }}
+                            disabled={offlineVoiceBusyId === `${turn.id}-${index}`}
+                            aria-label="播放这段对白，长按重新生成"
+                            title="播放缓存语音；长按重新生成"
+                        >
+                            {offlineVoiceBusyId === `${turn.id}-${index}` ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
+                        </button>
+                    )}
+                </span>
+            ))}
+        </div>
+    );
 
     const archivedTurnIds = useMemo(() => new Set(offlineChapters.flatMap(chapter => chapter.turnIds)), [offlineChapters]);
 
@@ -4329,6 +4402,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     reasoningText: result.reasoning,
                     thinkingText: result.thinking,
                     thinkingTag: result.thinkingTag,
+                    dialogueToneLabels: buildOfflineDialogueToneLabels(assistantContent),
                 });
                 setOfflineTurns(prev => [...prev, saved]);
             } catch (error: any) {
@@ -4491,6 +4565,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 reasoningText: result.reasoning,
                 thinkingText: result.thinking,
                 thinkingTag: result.thinkingTag,
+                dialogueToneLabels: buildOfflineDialogueToneLabels(assistantContent),
             });
             setOfflineTurns([...baseTurns, saved]);
         } catch (error: any) {
@@ -6268,7 +6343,36 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                 >大章节 · {chapter.title}</summary>
                                 {activeOfflineChapterId === chapter.id && renderOfflineChapterContextMenu(chapter)}
                                 <div className="chat-offline-summary-content">
-                                    <BilingualTextBlock text={chapter.content} mode="markdown" defaultExpanded />
+                                    {chapter.turnIds.map((turnId, index) => {
+                                        const turn = offlineTurns.find(item => item.id === turnId);
+                                        if (!turn) return null;
+                                        const display = offlineDisplayByTurnId.get(turn.id) ?? getOfflineDisplayText(turn);
+                                        return (
+                                            <div key={turn.id} className="chat-offline-chapter-turn">
+                                                <div className="chat-offline-chapter-turn-title">小节 {index + 1}</div>
+                                                {display.userContent.trim() && (
+                                                    <div className="chat-offline-chapter-action">
+                                                        <strong>你的行动：</strong>
+                                                        <BilingualTextBlock text={display.userContent} mode="markdown" defaultExpanded />
+                                                    </div>
+                                                )}
+                                                {display.assistantContent.trim() && (
+                                                    <div className="chat-offline-chapter-dialogue">
+                                                        <strong>剧情正文：</strong>
+                                                        {renderOfflineDialogueContent(turn, display.assistantContent)}
+                                                    </div>
+                                                )}
+                                                {display.summary.trim() && (
+                                                    <details className="chat-offline-summary-fold">
+                                                        <summary>摘要（{turn.summaryTag || "summary"}）</summary>
+                                                        <div className="chat-offline-summary-content">
+                                                            <BilingualTextBlock text={display.summary} mode="markdown" defaultExpanded />
+                                                        </div>
+                                                    </details>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             </details>
                         ))}
@@ -6390,56 +6494,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                         {...(activeOfflineTarget?.turnId === turn.id && activeOfflineTarget.role === "assistant" ? { "data-active": "" } : {})}
                                     >
                                         {activeOfflineTarget?.turnId === turn.id && activeOfflineTarget.role === "assistant" && renderOfflineContextMenu(turn, "assistant")}
-                                        <div className="chat-offline-dialogue-content">
-                                            {dialogueParts(offlineDisplay.assistantContent).map((part, index) => (
-                                                <span key={`${turn.id}-part-${index}`} className={part.dialogue ? "chat-offline-dialogue" : undefined}>
-                                                    <OfflineAssistantTextBlock
-                                                        text={part.text}
-                                                        defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
-                                                    />
-                                                    {part.dialogue && (
-                                                        <button
-                                                            type="button"
-                                                            className="chat-offline-voice-btn"
-                                                            onPointerDown={e => {
-                                                                e.stopPropagation();
-                                                                if (e.pointerType === "mouse" && e.button !== 0) return;
-                                                                offlineVoiceLongPressedRef.current = false;
-                                                                offlineVoiceLongPressRef.current = setTimeout(() => {
-                                                                    offlineVoiceLongPressedRef.current = true;
-                                                                    setOfflineVoiceConfirm({ turnId: turn.id, key: `${index}`, text: part.text, tone: turn.dialogueToneLabels?.[`${index}`] || offlineToneForText(part.text) });
-                                                                }, 500);
-                                                            }}
-                                                            onPointerUp={e => {
-                                                                e.stopPropagation();
-                                                                if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
-                                                                offlineVoiceLongPressRef.current = null;
-                                                                if (!offlineVoiceLongPressedRef.current && (e.pointerType !== "mouse" || e.button === 0)) {
-                                                                    if (offlineVoiceBusyId !== `${turn.id}-${index}`) void playOfflineDialogueVoice(turn, part.text, `${index}`);
-                                                                }
-                                                                offlineVoiceLongPressedRef.current = false;
-                                                            }}
-                                                            onPointerLeave={() => {
-                                                                if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
-                                                                offlineVoiceLongPressRef.current = null;
-                                                                offlineVoiceLongPressedRef.current = false;
-                                                            }}
-                                                            onPointerCancel={() => {
-                                                                if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
-                                                                offlineVoiceLongPressRef.current = null;
-                                                                offlineVoiceLongPressedRef.current = false;
-                                                            }}
-                                                            onContextMenu={e => { e.preventDefault(); setOfflineVoiceConfirm({ turnId: turn.id, key: `${index}`, text: part.text, tone: turn.dialogueToneLabels?.[`${index}`] || offlineToneForText(part.text) }); }}
-                                                            disabled={offlineVoiceBusyId === `${turn.id}-${index}`}
-                                                            aria-label="播放这段对白，长按重新生成"
-                                                            title="播放缓存语音；长按重新生成"
-                                                        >
-                                                            {offlineVoiceBusyId === `${turn.id}-${index}` ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
-                                                        </button>
-                                                    )}
-                                                </span>
-                                            ))}
-                                        </div>
+                                        {renderOfflineDialogueContent(turn, offlineDisplay.assistantContent)}
                                     </div>
                                     {turn.summary.trim() && (
                                         <details className="chat-offline-summary-fold">
