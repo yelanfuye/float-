@@ -2014,6 +2014,10 @@ export async function generateOfflineChatCompletion(
     );
     const summaryTag = preset?.story_summary_tag?.trim() || "summary";
     const thinkingTag = preset?.thinking_tag?.trim() || "thinking";
+    llmMessages.push({
+        role: "system",
+        content: "线下剧情对白格式要求：只有中文双引号“……”内的文字属于角色对白，描写必须放在引号外。对白必须保留中文双引号。你可以在一段对白内部按语义插入 1 至 2 个简短语气标签，格式如“[开心]句子a，句子b，[低声][犹豫]句子c”；标签只能放在中文双引号内部，不要把标签放到引号外，也不要把标签写进剧情描写。没有对白时不要添加语气标签。"
+    });
     const offlineTagEnabled = preset?.offline_thinking_enabled === true;
     let reasoning = "";
     const meta = { characterName: character.name, userName: userIdentity?.name };

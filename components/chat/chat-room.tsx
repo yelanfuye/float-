@@ -56,7 +56,7 @@ import { useKeyboardDismissAutoSend } from "@/components/chat/use-keyboard-dismi
 import { cancelBailoutKey } from "@/lib/push-bailout-client";
 import { PENDING_REPLY_PREFIX } from "@/lib/friend-request-engine";
 import type { UserIdentity } from "@/components/settings/user-identity";
-import { AlertCircle, Blocks, Check, Trash2, User, ChevronLeft, ChevronRight, Clapperboard, Clock, Gift, Languages, Loader2, MoreHorizontal, Mic, X } from "lucide-react";
+import { AlertCircle, Blocks, Check, Trash2, User, ChevronLeft, ChevronRight, Clapperboard, Clock, Gift, Languages, Loader2, MoreHorizontal, Volume2, X } from "lucide-react";
 import { setDebugChatState } from "@/lib/debug-store";
 import { SessionCustomCSS } from "@/components/ui/session-custom-css";
 import { setChatActive } from "@/lib/music-action-queue";
@@ -930,6 +930,8 @@ const OfflineTextInputBar = memo(forwardRef<OfflineTextInputHandle, {
     onToggleOfflineMode: () => void;
     onCloseEmojiPanel: () => void;
     onToggleEmojiPanel: () => void;
+    draftText: string;
+    onDraftTextChange: (text: string) => void;
     onSendText: (text: string) => boolean;
     onStopGeneration: () => void;
 }>(function OfflineTextInputBar({
@@ -940,11 +942,13 @@ const OfflineTextInputBar = memo(forwardRef<OfflineTextInputHandle, {
     onToggleOfflineMode,
     onCloseEmojiPanel,
     onToggleEmojiPanel,
+    draftText,
+    onDraftTextChange,
     onSendText,
     onStopGeneration,
 }, ref) {
-    const [inputText, setInputText] = useState("");
-    const inputTextRef = useRef("");
+    const [inputText, setInputText] = useState(draftText);
+    const inputTextRef = useRef(draftText);
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
     const resetTextareaHeight = () => {
@@ -958,9 +962,16 @@ const OfflineTextInputBar = memo(forwardRef<OfflineTextInputHandle, {
         ta.style.height = Math.min(ta.scrollHeight, 120) + "px";
     }, []);
 
+    useEffect(() => {
+        setInputText(draftText);
+        inputTextRef.current = draftText;
+        requestAnimationFrame(resizeTextarea);
+    }, [draftText, resizeTextarea]);
+
     const setTextAndResize = useCallback((text: string) => {
         inputTextRef.current = text;
         setInputText(text);
+        onDraftTextChange(text);
         requestAnimationFrame(resizeTextarea);
     }, [resizeTextarea]);
 
@@ -968,6 +979,7 @@ const OfflineTextInputBar = memo(forwardRef<OfflineTextInputHandle, {
         const nextText = inputTextRef.current + text;
         inputTextRef.current = nextText;
         setInputText(nextText);
+        onDraftTextChange(nextText);
         requestAnimationFrame(() => {
             resizeTextarea();
             if (options?.focus !== false) textareaRef.current?.focus();
@@ -978,6 +990,7 @@ const OfflineTextInputBar = memo(forwardRef<OfflineTextInputHandle, {
         clear: () => {
             inputTextRef.current = "";
             setInputText("");
+            onDraftTextChange("");
             resetTextareaHeight();
         },
         setText: setTextAndResize,
@@ -995,9 +1008,7 @@ const OfflineTextInputBar = memo(forwardRef<OfflineTextInputHandle, {
         const trimmed = inputTextRef.current.trim();
         if (!trimmed && !isSpectator) return;
         if (!onSendText(trimmed)) return;
-        inputTextRef.current = "";
-        setInputText("");
-        resetTextareaHeight();
+        // 草稿由聊天室父级持有，生成失败/停止/切换模式时仍可恢复；成功落库后由父级清空。
     };
 
     return (
@@ -1009,6 +1020,7 @@ const OfflineTextInputBar = memo(forwardRef<OfflineTextInputHandle, {
                 onChange={e => {
                     inputTextRef.current = e.target.value;
                     setInputText(e.target.value);
+                    onDraftTextChange(e.target.value);
                     e.target.style.height = "auto";
                     e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
                 }}
@@ -1096,6 +1108,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [offlineTurns, setOfflineTurns] = useState<ChatOfflineTurn[]>([]);
     const [offlineVisibleCount, setOfflineVisibleCount] = useState(OFFLINE_INITIAL_LOAD);
     const [pendingOfflineUserText, setPendingOfflineUserText] = useState("");
+    const [offlineDraftText, setOfflineDraftText] = useState("");
     const [isOfflineGenerating, setIsOfflineGenerating] = useState(false);
     // 流式生成预览：线上（单聊/群聊）与线下各一份，生成中实时刷新，结束后清空
     const [streamPreview, setStreamPreview] = useState<null | {
@@ -4098,18 +4111,28 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         setOfflineExportRangeOpen(false);
     };
 
-    const dialogueParts = (text: string): Array<{ text: string; dialogue: boolean }> => {
-        const parts: Array<{ text: string; dialogue: boolean }> = [];
+    const dialogueParts = (text: string): Array<{ text: string; speechText: string; tone: string; dialogue: boolean }> => {
+        const parts: Array<{ text: string; speechText: string; tone: string; dialogue: boolean }> = [];
         // 只有中文双引号中的内容算对白；书名号、单引号及无引号描写不生成语音。
         const matcher = /“[^”]*”/g;
         let cursor = 0;
         let match: RegExpExecArray | null;
         while ((match = matcher.exec(text)) !== null) {
-            if (match.index > cursor) parts.push({ text: text.slice(cursor, match.index), dialogue: false });
-            parts.push({ text: match[0].slice(1, -1).trim(), dialogue: true });
+            if (match.index > cursor) {
+                const textPart = text.slice(cursor, match.index);
+                parts.push({ text: textPart, speechText: textPart, tone: "", dialogue: false });
+            }
+            const quotedText = match[0].slice(1, -1).trim();
+            const tones = [...quotedText.matchAll(/\[([^\]\n]{1,24})\]/g)].map(item => item[1].trim()).filter(Boolean);
+            // 语气标签是线上语音逻辑的一部分，保留在实际 TTS 文本中；tone 另存用于固定情绪接口映射。
+            const speechText = quotedText;
+            parts.push({ text: match[0], speechText, tone: tones.join(" "), dialogue: true });
             cursor = match.index + match[0].length;
         }
-        if (cursor < text.length) parts.push({ text: text.slice(cursor), dialogue: false });
+        if (cursor < text.length) {
+            const textPart = text.slice(cursor);
+            parts.push({ text: textPart, speechText: textPart, tone: "", dialogue: false });
+        }
         return parts.filter(part => part.text.trim());
     };
 
@@ -4165,22 +4188,19 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
 
     const buildOfflineDialogueToneLabels = (text: string): Record<string, string> => Object.fromEntries(
         dialogueParts(text)
-            .map((part, index) => part.dialogue ? [String(index), offlineToneForText(part.text)] : null)
+            .map((part, index) => part.dialogue ? [String(index), part.tone || offlineToneForText(part.speechText)] : null)
             .filter((entry): entry is [string, string] => Boolean(entry))
     );
 
     const renderOfflineDialogueContent = (turn: ChatOfflineTurn, displayText: string) => (
         <div className="chat-offline-dialogue-content">
             {dialogueParts(displayText).map((part, index) => (
-                <span key={`${turn.id}-chapter-part-${index}`} className={part.dialogue ? "chat-offline-dialogue" : undefined}>
-                    <OfflineAssistantTextBlock
-                        text={part.text}
-                        defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
-                    />
+                <span key={`${turn.id}-chapter-part-${index}`} className={part.dialogue ? "chat-offline-dialogue" : undefined} style={part.dialogue ? { display: "inline-flex", alignItems: "center", gap: 4 } : undefined}>
                     {part.dialogue && (
                         <button
                             type="button"
                             className="chat-offline-voice-btn"
+                            style={{ order: -1 }}
                             onPointerDown={e => {
                                 e.stopPropagation();
                                 if (e.pointerType === "mouse" && e.button !== 0) return;
@@ -4190,8 +4210,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                     setOfflineVoiceConfirm({
                                         turnId: turn.id,
                                         key: `${index}`,
-                                        text: part.text,
-                                        tone: turn.dialogueToneLabels?.[`${index}`] || offlineToneForText(part.text),
+                                        text: part.speechText,
+                                        tone: part.tone || turn.dialogueToneLabels?.[`${index}`] || offlineToneForText(part.speechText),
                                     });
                                 }, 500);
                             }}
@@ -4200,7 +4220,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                 if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
                                 offlineVoiceLongPressRef.current = null;
                                 if (!offlineVoiceLongPressedRef.current && (e.pointerType !== "mouse" || e.button === 0)) {
-                                    if (offlineVoiceBusyId !== `${turn.id}-${index}`) void playOfflineDialogueVoice(turn, part.text, `${index}`);
+                                    if (offlineVoiceBusyId !== `${turn.id}-${index}`) void playOfflineDialogueVoice(turn, part.speechText, `${index}`);
                                 }
                                 offlineVoiceLongPressedRef.current = false;
                             }}
@@ -4219,17 +4239,21 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                 setOfflineVoiceConfirm({
                                     turnId: turn.id,
                                     key: `${index}`,
-                                    text: part.text,
-                                    tone: turn.dialogueToneLabels?.[`${index}`] || offlineToneForText(part.text),
+                                    text: part.speechText,
+                                    tone: part.tone || turn.dialogueToneLabels?.[`${index}`] || offlineToneForText(part.speechText),
                                 });
                             }}
                             disabled={offlineVoiceBusyId === `${turn.id}-${index}`}
                             aria-label="播放这段对白，长按重新生成"
                             title="播放缓存语音；长按重新生成"
                         >
-                            {offlineVoiceBusyId === `${turn.id}-${index}` ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
+                            {offlineVoiceBusyId === `${turn.id}-${index}` ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
                         </button>
                     )}
+                    <OfflineAssistantTextBlock
+                        text={part.text}
+                        defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                    />
                 </span>
             ))}
         </div>
@@ -4405,6 +4429,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     dialogueToneLabels: buildOfflineDialogueToneLabels(assistantContent),
                 });
                 setOfflineTurns(prev => [...prev, saved]);
+                setOfflineDraftText("");
+                offlineTextInputRef.current?.clear();
             } catch (error: any) {
                 if (!isCurrentOfflineRun() || isAbortLikeError(error)) return;
                 offlineTextInputRef.current?.setText(currentText);
@@ -4568,6 +4594,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 dialogueToneLabels: buildOfflineDialogueToneLabels(assistantContent),
             });
             setOfflineTurns([...baseTurns, saved]);
+            setOfflineDraftText("");
         } catch (error: any) {
             if (!isCurrentOfflineRun() || isAbortLikeError(error)) return;
             offlineTextInputRef.current?.setText(retryInput);
@@ -7122,6 +7149,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     key={session.id}
                     ref={offlineTextInputRef}
                     isOfflineGenerating={isOfflineGenerating}
+                    draftText={offlineDraftText}
+                    onDraftTextChange={setOfflineDraftText}
                     isSpectator={!!session.isGroup && !!session.isSpectator}
                     showEmojiPanel={showEmojiPanel}
                     enterToSendEnabled={enterToSendEnabled}
