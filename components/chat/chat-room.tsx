@@ -4124,8 +4124,12 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             }
             const quotedText = match[0].slice(1, -1).trim();
             const tones = [...quotedText.matchAll(/\[([^\]\n]{1,24})\]/g)].map(item => item[1].trim()).filter(Boolean);
-            // 语气标签是线上语音逻辑的一部分，保留在实际 TTS 文本中；tone 另存用于固定情绪接口映射。
-            const speechText = quotedText;
+            // 保留界面原文；括号内的行内翻译不进入 TTS，语气标签仍按线上格式保留。
+            const speechText = quotedText
+                .replace(/（[^）\n]*）/g, "")
+                .replace(/\([^()\n]*\)/g, "")
+                .replace(/\s{2,}/g, " ")
+                .trim();
             parts.push({ text: match[0], speechText, tone: tones.join(" "), dialogue: true });
             cursor = match.index + match[0].length;
         }
@@ -4192,72 +4196,85 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             .filter((entry): entry is [string, string] => Boolean(entry))
     );
 
-    const renderOfflineDialogueContent = (turn: ChatOfflineTurn, displayText: string) => (
-        <div className="chat-offline-dialogue-content">
-            {dialogueParts(displayText).map((part, index) => (
-                <span key={`${turn.id}-chapter-part-${index}`} className={part.dialogue ? "chat-offline-dialogue" : undefined} style={part.dialogue ? { display: "inline-flex", alignItems: "center", gap: 4 } : undefined}>
-                    {part.dialogue && (
-                        <button
-                            type="button"
-                            className="chat-offline-voice-btn"
-                            style={{ order: -1 }}
-                            onPointerDown={e => {
-                                e.stopPropagation();
-                                if (e.pointerType === "mouse" && e.button !== 0) return;
-                                offlineVoiceLongPressedRef.current = false;
-                                offlineVoiceLongPressRef.current = setTimeout(() => {
-                                    offlineVoiceLongPressedRef.current = true;
+    const renderOfflineDialogueContent = (turn: ChatOfflineTurn, displayText: string) => {
+        const bilingual = splitBilingualText(displayText);
+        const originalText = bilingual?.original || displayText;
+        const translatedText = bilingual?.translated || "";
+        return (
+            <div className="chat-offline-dialogue-content">
+                {dialogueParts(originalText).map((part, index) => (
+                    <span key={`${turn.id}-chapter-part-${index}`} className={part.dialogue ? "chat-offline-dialogue" : undefined} style={part.dialogue ? { display: "inline-flex", alignItems: "center", gap: 4 } : undefined}>
+                        {part.dialogue && (
+                            <button
+                                type="button"
+                                className="chat-offline-voice-btn"
+                                style={{ order: -1 }}
+                                onPointerDown={e => {
+                                    e.stopPropagation();
+                                    if (e.pointerType === "mouse" && e.button !== 0) return;
+                                    offlineVoiceLongPressedRef.current = false;
+                                    offlineVoiceLongPressRef.current = setTimeout(() => {
+                                        offlineVoiceLongPressedRef.current = true;
+                                        setOfflineVoiceConfirm({
+                                            turnId: turn.id,
+                                            key: `${index}`,
+                                            text: part.speechText,
+                                            tone: part.tone || turn.dialogueToneLabels?.[`${index}`] || offlineToneForText(part.speechText),
+                                        });
+                                    }, 500);
+                                }}
+                                onPointerUp={e => {
+                                    e.stopPropagation();
+                                    if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
+                                    offlineVoiceLongPressRef.current = null;
+                                    if (!offlineVoiceLongPressedRef.current && (e.pointerType !== "mouse" || e.button === 0)) {
+                                        if (offlineVoiceBusyId !== `${turn.id}-${index}`) void playOfflineDialogueVoice(turn, part.speechText, `${index}`);
+                                    }
+                                    offlineVoiceLongPressedRef.current = false;
+                                }}
+                                onPointerLeave={() => {
+                                    if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
+                                    offlineVoiceLongPressRef.current = null;
+                                    offlineVoiceLongPressedRef.current = false;
+                                }}
+                                onPointerCancel={() => {
+                                    if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
+                                    offlineVoiceLongPressRef.current = null;
+                                    offlineVoiceLongPressedRef.current = false;
+                                }}
+                                onContextMenu={e => {
+                                    e.preventDefault();
                                     setOfflineVoiceConfirm({
                                         turnId: turn.id,
                                         key: `${index}`,
                                         text: part.speechText,
                                         tone: part.tone || turn.dialogueToneLabels?.[`${index}`] || offlineToneForText(part.speechText),
                                     });
-                                }, 500);
-                            }}
-                            onPointerUp={e => {
-                                e.stopPropagation();
-                                if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
-                                offlineVoiceLongPressRef.current = null;
-                                if (!offlineVoiceLongPressedRef.current && (e.pointerType !== "mouse" || e.button === 0)) {
-                                    if (offlineVoiceBusyId !== `${turn.id}-${index}`) void playOfflineDialogueVoice(turn, part.speechText, `${index}`);
-                                }
-                                offlineVoiceLongPressedRef.current = false;
-                            }}
-                            onPointerLeave={() => {
-                                if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
-                                offlineVoiceLongPressRef.current = null;
-                                offlineVoiceLongPressedRef.current = false;
-                            }}
-                            onPointerCancel={() => {
-                                if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
-                                offlineVoiceLongPressRef.current = null;
-                                offlineVoiceLongPressedRef.current = false;
-                            }}
-                            onContextMenu={e => {
-                                e.preventDefault();
-                                setOfflineVoiceConfirm({
-                                    turnId: turn.id,
-                                    key: `${index}`,
-                                    text: part.speechText,
-                                    tone: part.tone || turn.dialogueToneLabels?.[`${index}`] || offlineToneForText(part.speechText),
-                                });
-                            }}
-                            disabled={offlineVoiceBusyId === `${turn.id}-${index}`}
-                            aria-label="播放这段对白，长按重新生成"
-                            title="播放缓存语音；长按重新生成"
-                        >
-                            {offlineVoiceBusyId === `${turn.id}-${index}` ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
-                        </button>
-                    )}
-                    <OfflineAssistantTextBlock
-                        text={part.text}
-                        defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
-                    />
-                </span>
-            ))}
-        </div>
-    );
+                                }}
+                                disabled={offlineVoiceBusyId === `${turn.id}-${index}`}
+                                aria-label="播放这段对白，长按重新生成"
+                                title="播放缓存语音；长按重新生成"
+                            >
+                                {offlineVoiceBusyId === `${turn.id}-${index}` ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
+                            </button>
+                        )}
+                        <OfflineAssistantTextBlock
+                            text={part.text}
+                            defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                        />
+                    </span>
+                ))}
+                {translatedText && (
+                    <div className="chat-offline-dialogue-translation">
+                        <OfflineAssistantTextBlock
+                            text={translatedText}
+                            defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                        />
+                    </div>
+                )}
+            </div>
+        );
+    };
 
     const archivedTurnIds = useMemo(() => new Set(offlineChapters.flatMap(chapter => chapter.turnIds)), [offlineChapters]);
 
