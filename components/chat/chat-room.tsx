@@ -4111,10 +4111,34 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         setOfflineExportRangeOpen(false);
     };
 
+    const normalizeOfflineNonDialogueQuotes = (text: string): string => text
+        .replace(/“([^”\n]*)”/g, (full, inside: string, offset: number, source: string) => {
+            const context = source.slice(Math.max(0, offset - 80), offset);
+            return /(仿佛|仿佛在说|仿佛再说|像是在说|似乎在说|表情|神情|眼神|心里|内心|想着|想道|读出)/.test(context)
+                ? `【${inside.trim()}】`
+                : full;
+        })
+        .replace(/"([^"\n]*)"/g, (full, inside: string, offset: number, source: string) => {
+            const context = source.slice(Math.max(0, offset - 80), offset);
+            return /(仿佛|仿佛在说|仿佛再说|像是在说|似乎在说|表情|神情|眼神|心里|内心|想着|想道|读出)/.test(context)
+                ? `【${inside.trim()}】`
+                : full;
+        });
+
+    const splitOfflineTranslation = (text: string): { original: string; translated: string } | null => {
+        const bilingual = splitBilingualText(text);
+        if (bilingual) return bilingual;
+        const separator = text.match(/(?:^|\n)\s*(?:-{3,}|_{3,}|={3,}|—{3,})\s*(?:\n|$)/);
+        if (!separator || separator.index === undefined) return null;
+        const before = text.slice(0, separator.index).trim();
+        const after = text.slice(separator.index + separator[0].length).trim();
+        return before && after ? { original: before, translated: after } : null;
+    };
+
     const dialogueParts = (text: string): Array<{ text: string; speechText: string; tone: string; dialogue: boolean }> => {
         const parts: Array<{ text: string; speechText: string; tone: string; dialogue: boolean }> = [];
-        // 只有中文双引号中的内容算对白；书名号、单引号及无引号描写不生成语音。
-        const matcher = /“[^”]*”/g;
+        // 对白支持中文弯引号和英文直引号；翻译层会在进入此函数前剥离。
+        const matcher = /“[^”\n]*”|"[^"\n]*"/g;
         let cursor = 0;
         let match: RegExpExecArray | null;
         while ((match = matcher.exec(text)) !== null) {
@@ -4197,8 +4221,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     );
 
     const renderOfflineDialogueContent = (turn: ChatOfflineTurn, displayText: string) => {
-        const bilingual = splitBilingualText(displayText);
-        const originalText = bilingual?.original || displayText;
+        const bilingual = splitOfflineTranslation(displayText);
+        const originalText = normalizeOfflineNonDialogueQuotes(bilingual?.original || displayText);
         const translatedText = bilingual?.translated || "";
         return (
             <div className="chat-offline-dialogue-content">
@@ -4430,7 +4454,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     ? await generateGroupOfflineChatCompletion(session, history, { signal: offlineRun.controller.signal, onStreamDelta: onOfflineDelta })
                     : await generateOfflineChatCompletion(session, history, { signal: offlineRun.controller.signal, onStreamDelta: onOfflineDelta });
                 if (!isCurrentOfflineRun()) return;
-                const assistantContent = result.content.trim() || result.rawText.trim();
+                let assistantContent = result.content.trim() || result.rawText.trim();
+                assistantContent = normalizeOfflineNonDialogueQuotes(assistantContent);
                 if (!assistantContent) throw new Error("AI 没有返回线下正文");
                 if (!result.summary.trim()) showChatToast(`未提取到 <${result.summaryTag}> 摘要`);
                 const saved = appendChatOfflineTurn({
@@ -4595,7 +4620,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 ? await generateGroupOfflineChatCompletion(session, history, { signal: offlineRun.controller.signal, onStreamDelta: onOfflineDelta })
                 : await generateOfflineChatCompletion(session, history, { signal: offlineRun.controller.signal, onStreamDelta: onOfflineDelta });
             if (!isCurrentOfflineRun()) return;
-            const assistantContent = result.content.trim() || result.rawText.trim();
+            let assistantContent = result.content.trim() || result.rawText.trim();
+            assistantContent = normalizeOfflineNonDialogueQuotes(assistantContent);
             if (!assistantContent) throw new Error("AI 没有返回线下正文");
             if (!result.summary.trim()) showChatToast(`未提取到 <${result.summaryTag}> 摘要`);
             const saved = appendChatOfflineTurn({
@@ -4612,6 +4638,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             });
             setOfflineTurns([...baseTurns, saved]);
             setOfflineDraftText("");
+            offlineTextInputRef.current?.clear();
         } catch (error: any) {
             if (!isCurrentOfflineRun() || isAbortLikeError(error)) return;
             offlineTextInputRef.current?.setText(retryInput);
