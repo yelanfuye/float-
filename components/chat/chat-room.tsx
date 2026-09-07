@@ -4138,6 +4138,16 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             .replace(/"([^"\n]*)"/g, normalizeQuoted);
     };
 
+    const restoreStandaloneOfflineDialogue = (text: string): string => text.replace(/(^|\n)\s*【([^【】\n]+)】\s*(?=\n|$)/g, (full, prefix: string, inside: string) => {
+        const value = inside.trim();
+        const looksLikeNarration = /^(?:风险评估|逻辑优化|计划|服务|基础设施|表情|神情|眼神|心里|内心|想法|念头|回忆|记忆|动作|环境|气氛|声音|脚步|目光|笑意|泪水|情绪|状态)\b/.test(value);
+        const hasSpeechPunctuation = /[，。！？；：,.!?;:]/.test(value);
+        const hasSentenceShape = /(?:我|你|他|她|我们|你们|他们|请|别|不要|能不能|为什么|怎么|是否|已经|这|那|没|不|是|会|要|想|给|让|知道|觉得|认为)/.test(value);
+        return !looksLikeNarration && (hasSpeechPunctuation || hasSentenceShape)
+            ? `${prefix}“${value}”`
+            : full;
+    });
+
     const splitOfflineTranslation = (text: string): { original: string; translated: string } | null => {
         const bilingual = splitBilingualText(text);
         if (bilingual) return bilingual;
@@ -4242,7 +4252,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
 
     const renderOfflineDialogueContent = (turn: ChatOfflineTurn, displayText: string) => {
         const bilingual = splitOfflineTranslation(displayText);
-        const originalText = normalizeOfflineNonDialogueQuotes(bilingual?.original || displayText);
+        const originalText = restoreStandaloneOfflineDialogue(normalizeOfflineNonDialogueQuotes(bilingual?.original || displayText));
         const translatedText = bilingual?.translated || "";
         return (
             <div className="chat-offline-dialogue-content">
