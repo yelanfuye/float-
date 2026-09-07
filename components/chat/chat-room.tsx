@@ -4120,19 +4120,23 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         setOfflineExportRangeOpen(false);
     };
 
-    const normalizeOfflineNonDialogueQuotes = (text: string): string => text
-        .replace(/“([^”\n]*)”/g, (full, inside: string, offset: number, source: string) => {
-            const context = source.slice(Math.max(0, offset - 140), offset);
-            return /(仿佛(?:是|在|再)?说|像是(?:在)?说|似乎(?:是|在)?说|看起来(?:像是)?在说|表情(?:上|里)?(?:写着|流露出)|神情(?:中|里)?(?:带着|写着)|眼神(?:中|里)?(?:透露|流露|写着)|心里|内心|脑海|想着|想道|默念|读出|透露出|流露出|仿佛在喊|像是在喊)/.test(context)
-                ? `【${inside.trim()}】`
-                : full;
-        })
-        .replace(/"([^"\n]*)"/g, (full, inside: string, offset: number, source: string) => {
-            const context = source.slice(Math.max(0, offset - 140), offset);
-            return /(仿佛(?:是|在|再)?说|像是(?:在)?说|似乎(?:是|在)?说|看起来(?:像是)?在说|表情(?:上|里)?(?:写着|流露出)|神情(?:中|里)?(?:带着|写着)|眼神(?:中|里)?(?:透露|流露|写着)|心里|内心|脑海|想着|想道|默念|读出|透露出|流露出|仿佛在喊|像是在喊)/.test(context)
-                ? `【${inside.trim()}】`
-                : full;
-        });
+    const normalizeOfflineNonDialogueQuotes = (text: string): string => {
+        const normalizeQuoted = (full: string, inside: string, offset: number, source: string): string => {
+            const lineStart = source.lastIndexOf("\n", offset) + 1;
+            const lineEndIndex = source.indexOf("\n", offset + full.length);
+            const lineEnd = lineEndIndex < 0 ? source.length : lineEndIndex;
+            const line = source.slice(lineStart, lineEnd).trim();
+            const before = source.slice(lineStart, offset).trim();
+            const after = source.slice(offset + full.length, lineEnd).trim();
+            const speechCue = /(?:说|说道|说着|问|问道|答|答道|喊|喊道|叫道|低声道|轻声道|喃喃道|嘟囔道|怒道|笑道|解释道|宣布道|宣告道|回答道|反问道|附和道|接话道|插话道|嘶吼道|吼道|哭喊道|自言自语道|says?|said|asks?|asked|repl(?:y|ied)|shouts?|yells?)\s*[:：,，]?$/i;
+            const standaloneDialogue = /^([“"])[^”"\n]+([”"])\s*[。.!！?？…]*$/.test(line);
+            const explicitDialogue = speechCue.test(before) || speechCue.test(after);
+            return standaloneDialogue || explicitDialogue ? full : `【${inside.trim()}】`;
+        };
+        return text
+            .replace(/“([^”\n]*)”/g, normalizeQuoted)
+            .replace(/"([^"\n]*)"/g, normalizeQuoted);
+    };
 
     const splitOfflineTranslation = (text: string): { original: string; translated: string } | null => {
         const bilingual = splitBilingualText(text);
@@ -4298,14 +4302,16 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                 {offlineVoiceBusyId === `${turn.id}-${index}` ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
                             </button>
                         )}
-                        <OfflineAssistantTextBlock
-                            text={part.text}
-                            defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
-                        />
+                        <span className={part.dialogue ? "original" : undefined} style={part.dialogue ? { userSelect: "text", WebkitUserSelect: "text" } : undefined}>
+                            <OfflineAssistantTextBlock
+                                text={part.text}
+                                defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}
+                            />
+                        </span>
                     </span>
                 ))}
                 {translatedText && (
-                    <div className="chat-offline-dialogue-translation">
+                    <div className="translation chat-offline-dialogue-translation" style={{ userSelect: "none", WebkitUserSelect: "none" }}>
                         <OfflineAssistantTextBlock
                             text={translatedText}
                             defaultExpanded={session.collapseBilingualTranslation !== false ? false : true}

@@ -878,6 +878,25 @@
   background: color-mix(in srgb, var(--c-icon) 8%, transparent);
 }
 
+/* 线下双语：只允许原文参与选择，翻译层不进入文本选区。 */
+.chat-offline-text .original {
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  border-bottom: 1px solid color-mix(in srgb, var(--c-text-title) 42%, transparent);
+}
+
+.chat-offline-text .translation {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  color: #5a9e8a;
+  font-size: 0.92em;
+  font-style: italic;
+}
+
 .chat-offline-entry[data-role="assistant"] .chat-offline-text {
   color: var(--c-text-title);
 }
