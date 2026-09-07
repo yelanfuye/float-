@@ -97,6 +97,15 @@ import { ChatPluginSlot } from "@/components/chat/chat-plugin-slot";
 // Call messages are stored with user/assistant role for correct prompt alternation,
 // but should render as centered system notifications in the UI.
 const CALL_SYS_RE = /\[我(?:向.+)?(?:发起了|挂断了|拒绝了|取消了)(?:群?(?:语音|视频)通话)/;
+
+// ElevenLabs v3 只接受英文方括号语气提示；普通方括号内容不能误当成 TTS 标签。
+const ELEVEN_V3_TONE_LABELS = new Set([
+    "whispers", "angrily, fed up", "quietly", "sigh", "interjecting", "deep voice",
+    "laughs", "chuckles", "giggles", "crying", "sobbing", "shouts", "yells",
+    "excited", "sad", "angry", "happy", "fearful", "surprised", "calm",
+]);
+const ELEVEN_V3_TONE_RE = /\[([^\]\n]{1,40})\]/g;
+
 function isCallSysMsg(msg: ChatMessage): boolean {
     return CALL_SYS_RE.test(msg.content);
 }
@@ -4113,14 +4122,14 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
 
     const normalizeOfflineNonDialogueQuotes = (text: string): string => text
         .replace(/“([^”\n]*)”/g, (full, inside: string, offset: number, source: string) => {
-            const context = source.slice(Math.max(0, offset - 80), offset);
-            return /(仿佛|仿佛在说|仿佛再说|像是在说|似乎在说|表情|神情|眼神|心里|内心|想着|想道|读出)/.test(context)
+            const context = source.slice(Math.max(0, offset - 140), offset);
+            return /(仿佛(?:是|在|再)?说|像是(?:在)?说|似乎(?:是|在)?说|看起来(?:像是)?在说|表情(?:上|里)?(?:写着|流露出)|神情(?:中|里)?(?:带着|写着)|眼神(?:中|里)?(?:透露|流露|写着)|心里|内心|脑海|想着|想道|默念|读出|透露出|流露出|仿佛在喊|像是在喊)/.test(context)
                 ? `【${inside.trim()}】`
                 : full;
         })
         .replace(/"([^"\n]*)"/g, (full, inside: string, offset: number, source: string) => {
-            const context = source.slice(Math.max(0, offset - 80), offset);
-            return /(仿佛|仿佛在说|仿佛再说|像是在说|似乎在说|表情|神情|眼神|心里|内心|想着|想道|读出)/.test(context)
+            const context = source.slice(Math.max(0, offset - 140), offset);
+            return /(仿佛(?:是|在|再)?说|像是(?:在)?说|似乎(?:是|在)?说|看起来(?:像是)?在说|表情(?:上|里)?(?:写着|流露出)|神情(?:中|里)?(?:带着|写着)|眼神(?:中|里)?(?:透露|流露|写着)|心里|内心|脑海|想着|想道|默念|读出|透露出|流露出|仿佛在喊|像是在喊)/.test(context)
                 ? `【${inside.trim()}】`
                 : full;
         });
@@ -4147,11 +4156,14 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 parts.push({ text: textPart, speechText: textPart, tone: "", dialogue: false });
             }
             const quotedText = match[0].slice(1, -1).trim();
-            const tones = [...quotedText.matchAll(/\[([^\]\n]{1,24})\]/g)].map(item => item[1].trim()).filter(Boolean);
-            // 保留界面原文；括号内的行内翻译不进入 TTS，语气标签仍按线上格式保留。
+            const tones = [...quotedText.matchAll(ELEVEN_V3_TONE_RE)]
+                .map(item => item[1].trim().toLowerCase())
+                .filter(label => ELEVEN_V3_TONE_LABELS.has(label));
+            // 行内括号翻译和非白名单方括号都不进入 TTS；合法 v3 标签保留给 ElevenLabs。
             const speechText = quotedText
                 .replace(/（[^）\n]*）/g, "")
                 .replace(/\([^()\n]*\)/g, "")
+                .replace(ELEVEN_V3_TONE_RE, (full, label: string) => ELEVEN_V3_TONE_LABELS.has(label.trim().toLowerCase()) ? full : "")
                 .replace(/\s{2,}/g, " ")
                 .trim();
             parts.push({ text: match[0], speechText, tone: tones.join(" "), dialogue: true });
@@ -4189,6 +4201,10 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         setOfflineVoiceBusyId(`${turnId}-${key}`);
         try {
             const requestedTone = tone?.trim() || offlineToneForText(text);
+            const isElevenV3 = config.provider === "ElevenLabs" && (config.model || "eleven_v3").trim().toLowerCase() === "eleven_v3";
+            const ttsText = isElevenV3
+                ? text
+                : text.replace(ELEVEN_V3_TONE_RE, "").replace(/\s{2,}/g, " ").trim();
             const emotion = /开心|高兴|快乐|兴奋|喜悦|happy/i.test(requestedTone) ? "happy"
                 : /悲伤|难过|哭|失落|sad/i.test(requestedTone) ? "sad"
                     : /生气|愤怒|恼怒|angry/i.test(requestedTone) ? "angry"
@@ -4197,7 +4213,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                 : /厌恶|恶心|disgust/i.test(requestedTone) ? "disgusted"
                                     : /平静|冷静|calm/i.test(requestedTone) ? "calm"
                                         : "neutral";
-            const blob = await synthesizeSpeech(text, config, { emotion });
+            const blob = await synthesizeSpeech(ttsText, config, { emotion });
             if (!blob) throw new Error("未返回音频");
             const ref = await storeMediaBlob(blob, blob.type || "audio/mpeg", "audio");
             const turn = offlineTurns.find(item => item.id === turnId);
@@ -5810,8 +5826,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         left: 12,
                         right: 12,
                         zIndex: 45,
-                        background: "rgba(224, 235, 239, 0.86)",
-                        border: "1px solid rgba(91, 126, 138, 0.28)",
+                        background: "rgba(239, 246, 255, 0.90)",
+                        border: "1px solid rgba(59, 130, 246, 0.28)",
                         backdropFilter: "blur(18px)",
                         WebkitBackdropFilter: "blur(18px)",
                         borderRadius: 16,
@@ -5925,7 +5941,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                 padding: "6px 0",
                                 borderRadius: 6,
                                 border: "none",
-                                background: "rgba(91, 126, 138, 0.88)",
+                                background: "rgba(37, 99, 235, 0.88)",
                                 color: "#fff",
                                 fontSize: 12,
                                 fontWeight: 500,
@@ -5946,8 +5962,9 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                 padding: "6px 0",
                                 borderRadius: 6,
                                 border: "1px solid var(--c-border, rgba(0,0,0,0.12))",
-                                background: "var(--c-card, #fff)",
-                                color: "var(--c-text, #334155)",
+                                background: "rgba(14, 165, 233, 0.10)",
+                                borderColor: "rgba(14, 165, 233, 0.42)",
+                                color: "#0369a1",
                                 fontSize: 12,
                                 fontWeight: 500,
                                 cursor: "pointer",
