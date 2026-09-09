@@ -921,7 +921,7 @@
 }
 
 .chat-offline-dialogue-bubble {
-  display: inline-flex;
+  display: flex;
   align-items: flex-start;
   gap: 6px;
   max-width: min(86%, 620px);
