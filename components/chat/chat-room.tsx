@@ -10,6 +10,7 @@ import { isKnownStickerLabel } from "@/lib/sticker-data";
 import { translateReasoningText } from "@/lib/reasoning-translate";
 import { MessageBubble, MediaDetailModal, prewarmStickerCache, BilingualTextBlock, isStandaloneHtmlPreviewContent, normalizeTextBubbleContent, synthesizeVoiceForMessage } from "./message-bubble";
 import { splitBilingualText } from "@/lib/bilingual-text";
+import { parseOfflineDialogueBlocks } from "@/lib/offline-dialogue-parser";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
 import { PhotoInputModal, TextPhotoModal, VoiceRecordModal, RedPacketModal, LocationInputModal, SystemInstructionModal } from "./rich-input-modals";
 import { EmojiPanel, StickerPanel } from "./emoji-panel";
@@ -4251,6 +4252,71 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     );
 
     const renderOfflineDialogueContent = (turn: ChatOfflineTurn, displayText: string) => {
+        const structuredBlocks = parseOfflineDialogueBlocks(displayText);
+        const stripStructuredDialogueQuotes = (value: string): string => value
+            .trim()
+            .replace(/^(?:\[[^\]\n]+\]\s*)*([「“"])([\s\S]*?)([」”"])\s*(?:\[[^\]\n]+\]\s*)*$/u, "$2")
+            .trim();
+        const renderStructuredVoiceButton = (text: string, key: string) => (
+            <button
+                type="button"
+                className="chat-offline-voice-btn"
+                onPointerDown={e => {
+                    e.stopPropagation();
+                    if (e.pointerType === "mouse" && e.button !== 0) return;
+                    offlineVoiceLongPressedRef.current = false;
+                    offlineVoiceLongPressRef.current = setTimeout(() => {
+                        offlineVoiceLongPressedRef.current = true;
+                        setOfflineVoiceConfirm({ turnId: turn.id, key, text, tone: offlineToneForText(text) });
+                    }, 500);
+                }}
+                onPointerUp={e => {
+                    e.stopPropagation();
+                    if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
+                    offlineVoiceLongPressRef.current = null;
+                    if (!offlineVoiceLongPressedRef.current && (e.pointerType !== "mouse" || e.button === 0)) {
+                        if (offlineVoiceBusyId !== `${turn.id}-${key}`) void playOfflineDialogueVoice(turn, text, key);
+                    }
+                    offlineVoiceLongPressedRef.current = false;
+                }}
+                onPointerLeave={() => {
+                    if (offlineVoiceLongPressRef.current) clearTimeout(offlineVoiceLongPressRef.current);
+                    offlineVoiceLongPressRef.current = null;
+                    offlineVoiceLongPressedRef.current = false;
+                }}
+                onContextMenu={e => {
+                    e.preventDefault();
+                    setOfflineVoiceConfirm({ turnId: turn.id, key, text, tone: offlineToneForText(text) });
+                }}
+                disabled={offlineVoiceBusyId === `${turn.id}-${key}`}
+                aria-label="播放角色对白，长按重新生成"
+                title="播放缓存语音；长按重新生成"
+            >
+                {offlineVoiceBusyId === `${turn.id}-${key}` ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
+            </button>
+        );
+        if (structuredBlocks) {
+            return (
+                <div className="chat-offline-structured-content">
+                    {structuredBlocks.map((block, index) => {
+                        if (block.type === "narration") {
+                            return <div key={`${turn.id}-narration-${index}`} className="chat-offline-narration"><OfflineAssistantTextBlock text={block.text} defaultExpanded /></div>;
+                        }
+                        const speechText = stripStructuredDialogueQuotes(block.text);
+                        const bubbleClass = block.type === "user_dialogue" ? "chat-offline-dialogue-bubble chat-offline-dialogue-bubble-user" : "chat-offline-dialogue-bubble chat-offline-dialogue-bubble-char";
+                        return (
+                            <div key={`${turn.id}-dialogue-${index}`} className={bubbleClass}>
+                                {block.type === "char_dialogue" && speechText && renderStructuredVoiceButton(speechText, `structured-${index}`)}
+                                <span className="original" style={{ userSelect: "text", WebkitUserSelect: "text" }}>
+                                    <OfflineAssistantTextBlock text={block.text} defaultExpanded />
+                                </span>
+                                {block.translation && <span className="translation" style={{ userSelect: "none", WebkitUserSelect: "none" }}><OfflineAssistantTextBlock text={block.translation} defaultExpanded={false} /></span>}
+                            </div>
+                        );
+                    })}
+                </div>
+            );
+        }
         const bilingual = splitOfflineTranslation(displayText);
         const originalText = restoreStandaloneOfflineDialogue(normalizeOfflineNonDialogueQuotes(bilingual?.original || displayText));
         const translatedText = bilingual?.translated || "";

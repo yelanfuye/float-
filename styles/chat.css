@@ -905,6 +905,60 @@
   color: var(--c-text);
 }
 
+.chat-offline-structured-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.chat-offline-narration {
+  align-self: center;
+  max-width: min(92%, 680px);
+  text-align: center;
+  color: var(--c-text-title);
+  line-height: 1.85;
+}
+
+.chat-offline-dialogue-bubble {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: min(86%, 620px);
+  padding: 9px 12px;
+  border-radius: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.chat-offline-dialogue-bubble-char {
+  align-self: flex-start;
+  background: color-mix(in srgb, var(--c-card) 84%, var(--c-icon));
+  color: var(--c-text-title);
+}
+
+.chat-offline-dialogue-bubble-user {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--c-bubble-self) 82%, white);
+  color: var(--c-text-title);
+}
+
+.chat-offline-dialogue-bubble .original,
+.chat-offline-dialogue-bubble .translation {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chat-offline-dialogue-bubble .translation {
+  display: block;
+  margin-top: 4px;
+  color: #5a9e8a;
+  font-size: 0.92em;
+  font-style: italic;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 .chat-offline-menu-trigger {
   width: 24px;
   height: 20px;
