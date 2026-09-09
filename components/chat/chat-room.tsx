@@ -1166,8 +1166,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [offlineChapterName, setOfflineChapterName] = useState("");
     const [expandedOfflineChapterIds, setExpandedOfflineChapterIds] = useState<Set<string>>(() => new Set(loadChatOfflineChapters(session.id).map(chapter => chapter.id)));
     const [offlineVoiceBusyId, setOfflineVoiceBusyId] = useState<string | null>(null);
-    const [offlineVoicePlayedIds, setOfflineVoicePlayedIds] = useState<Set<string>>(new Set());
-    const [offlineVoiceConfirm, setOfflineVoiceConfirm] = useState<{ turnId: string; key: string; text: string; tone?: string; characterId?: string } | null>(null);
+    const [offlineVoiceConfirm, setOfflineVoiceConfirm] = useState<{ turnId: string; key: string; text: string; tone?: string } | null>(null);
     const [activeOfflineChapterId, setActiveOfflineChapterId] = useState<string | null>(null);
     const offlineVoiceLongPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const offlineVoiceLongPressedRef = useRef(false);
@@ -4192,7 +4191,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         return parts.filter(part => part.text.trim());
     };
 
-    const playOfflineDialogueVoice = async (turn: ChatOfflineTurn, text: string, key: string, characterId = session.contactId) => {
+    const playOfflineDialogueVoice = async (turn: ChatOfflineTurn, text: string, key: string) => {
         if (offlineVoiceBusyId) return;
         const cachedRef = turn.dialogueVoiceRefs?.[key];
         setOfflineVoiceBusyId(`${turn.id}-${key}`);
@@ -4201,7 +4200,6 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 const cached = await loadMediaBlob(cachedRef);
                 if (cached) {
                     await playAudioBlobViaMediaElement(cached.blob).promise;
-                    setOfflineVoicePlayedIds(prev => new Set(prev).add(`${turn.id}-${key}`));
                     return;
                 }
             }
@@ -4211,9 +4209,8 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
 
     const generateOfflineDialogueVoice = async () => {
         if (!offlineVoiceConfirm || offlineVoiceBusyId) return;
-        const { turnId, key, text, tone, characterId } = offlineVoiceConfirm;
-        const voiceCharacterId = characterId || session.contactId;
-        const config = resolveVoiceConfig(voiceCharacterId, session.isGroup ? "group_chat" : "chat");
+        const { turnId, key, text, tone } = offlineVoiceConfirm;
+        const config = resolveVoiceConfig(session.contactId, session.isGroup ? "group_chat" : "chat");
         if (!config || !config.enableTTS) { setOfflineVoiceConfirm(null); showChatToast("请先配置并启用语音合成"); return; }
         setOfflineVoiceConfirm(null);
         setOfflineVoiceBusyId(`${turnId}-${key}`);
@@ -4243,7 +4240,6 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 if (updated) setOfflineTurns(prev => prev.map(item => item.id === updated.id ? updated : item));
             }
             await playAudioBlobViaMediaElement(blob).promise;
-            setOfflineVoicePlayedIds(prev => new Set(prev).add(`${turnId}-${key}`));
         } catch (error) {
             showChatToast(`语音生成失败：${error instanceof Error ? error.message : String(error)}`, 3000);
         } finally { setOfflineVoiceBusyId(null); }
@@ -4257,36 +4253,34 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
 
     const renderOfflineDialogueContent = (turn: ChatOfflineTurn, displayText: string) => {
         const structuredBlocks = parseOfflineDialogueBlocks(displayText);
-        if (structuredBlocks) {
+        if (structuredBlocks && !session.isGroup) {
             return (
                 <div className="chat-offline-structured-content">
                     {structuredBlocks.map((block, index) => {
-                        const blockKey = `${turn.id}-structured-${index}`;
+                        const key = `structured-${index}`;
+                        const voiceId = `${turn.id}-${key}`;
                         if (block.type === "narration") {
-                            return <div key={blockKey} className="chat-offline-narration"><OfflineAssistantTextBlock text={block.text} defaultExpanded /></div>;
+                            return <div key={voiceId} className="chat-offline-narration"><OfflineAssistantTextBlock text={block.text} defaultExpanded /></div>;
                         }
                         const speechText = block.text.trim().replace(/^(?:\[[^\]\n]+\]\s*)*([「“"])([\s\S]*?)([」”"])(?:\s*\[[^\]\n]+\])*$/u, "$2").trim();
-                        const voiceKey = `structured-${index}`;
-                        const voiceId = `${turn.id}-${voiceKey}`;
-                        const speakerId = block.speakerId || session.contactId;
-                        const voiceConfig = block.type === "char_dialogue" ? resolveVoiceConfig(speakerId, session.isGroup ? "group_chat" : "chat") : null;
+                        const voiceConfig = block.type === "char_dialogue" ? resolveVoiceConfig(session.contactId, "chat") : null;
                         const canSpeak = Boolean(voiceConfig?.enableTTS && voiceConfig.defaultVoice?.trim());
                         return (
-                            <div key={blockKey} className={block.type === "user_dialogue" ? "chat-offline-dialogue-bubble chat-offline-dialogue-bubble-user" : "chat-offline-dialogue-bubble chat-offline-dialogue-bubble-char"}>
+                            <div key={voiceId} className={block.type === "user_dialogue" ? "chat-offline-dialogue-bubble chat-offline-dialogue-bubble-user" : "chat-offline-dialogue-bubble chat-offline-dialogue-bubble-char"}>
                                 {canSpeak && speechText && (
                                     <button
                                         type="button"
                                         className="chat-offline-voice-btn"
                                         onClick={() => {
                                             if (offlineVoiceBusyId === voiceId) return;
-                                            if (turn.dialogueVoiceRefs?.[voiceKey]) void playOfflineDialogueVoice(turn, speechText, voiceKey, speakerId);
-                                            else setOfflineVoiceConfirm({ turnId: turn.id, key: voiceKey, text: speechText, tone: offlineToneForText(speechText), characterId: speakerId });
+                                            if (turn.dialogueVoiceRefs?.[key]) void playOfflineDialogueVoice(turn, speechText, key);
+                                            else setOfflineVoiceConfirm({ turnId: turn.id, key, text: speechText, tone: offlineToneForText(speechText) });
                                         }}
                                         disabled={offlineVoiceBusyId === voiceId}
                                         aria-label="播放角色对白"
                                         title="播放缓存语音；长按生成语音"
                                     >
-                                        {offlineVoiceBusyId === voiceId ? <Loader2 size={14} className="animate-spin" /> : offlineVoicePlayedIds.has(voiceId) ? <Check size={14} /> : <Volume2 size={14} />}
+                                        {offlineVoiceBusyId === voiceId ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
                                     </button>
                                 )}
                                 <span className="original" style={{ userSelect: "text", WebkitUserSelect: "text" }}><OfflineAssistantTextBlock text={block.text} defaultExpanded /></span>
