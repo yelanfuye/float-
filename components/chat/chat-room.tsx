@@ -10,6 +10,7 @@ import { isKnownStickerLabel } from "@/lib/sticker-data";
 import { translateReasoningText } from "@/lib/reasoning-translate";
 import { MessageBubble, MediaDetailModal, prewarmStickerCache, BilingualTextBlock, isStandaloneHtmlPreviewContent, normalizeTextBubbleContent, synthesizeVoiceForMessage } from "./message-bubble";
 import { splitBilingualText } from "@/lib/bilingual-text";
+import { parseOfflineDialogueBlocks } from "@/lib/offline-dialogue-parser";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
 import { PhotoInputModal, TextPhotoModal, VoiceRecordModal, RedPacketModal, LocationInputModal, SystemInstructionModal } from "./rich-input-modals";
 import { EmojiPanel, StickerPanel } from "./emoji-panel";
@@ -4264,33 +4265,30 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         if (block.type === "narration") {
                             return <div key={blockKey} className="chat-offline-narration"><OfflineAssistantTextBlock text={block.text} defaultExpanded /></div>;
                         }
-                        const speakerId = block.speakerId || session.contactId;
-                        const voiceConfig = block.type === "char_dialogue"
-                            ? resolveVoiceConfig(speakerId, session.isGroup ? "group_chat" : "chat")
-                            : null;
-                        const canSpeak = Boolean(voiceConfig?.enableTTS && voiceConfig.defaultVoice?.trim());
+                        const speechText = block.text.trim().replace(/^(?:\[[^\]\n]+\]\s*)*([「“"])([\s\S]*?)([」”"])(?:\s*\[[^\]\n]+\])*$/u, "$2").trim();
                         const voiceKey = `structured-${index}`;
                         const voiceId = `${turn.id}-${voiceKey}`;
-                        const strippedText = block.text.trim().replace(/^(?:\[[^\]\n]+\]\s*)*([「“"])([\s\S]*?)([」”"])(?:\s*\[[^\]\n]+\])*$/u, "$2").trim();
-                        const playButton = canSpeak && strippedText ? (
-                            <button
-                                type="button"
-                                className="chat-offline-voice-btn"
-                                onClick={() => {
-                                    if (offlineVoiceBusyId === voiceId) return;
-                                    if (turn.dialogueVoiceRefs?.[voiceKey]) void playOfflineDialogueVoice(turn, strippedText, voiceKey, speakerId);
-                                    else setOfflineVoiceConfirm({ turnId: turn.id, key: voiceKey, text: strippedText, tone: offlineToneForText(strippedText), characterId: speakerId });
-                                }}
-                                disabled={offlineVoiceBusyId === voiceId}
-                                aria-label="播放角色对白"
-                                title="播放缓存语音；长按生成语音"
-                            >
-                                {offlineVoiceBusyId === voiceId ? <Loader2 size={14} className="animate-spin" /> : offlineVoicePlayedIds.has(voiceId) ? <Check size={14} /> : <Volume2 size={14} />}
-                            </button>
-                        ) : null;
+                        const speakerId = block.speakerId || session.contactId;
+                        const voiceConfig = block.type === "char_dialogue" ? resolveVoiceConfig(speakerId, session.isGroup ? "group_chat" : "chat") : null;
+                        const canSpeak = Boolean(voiceConfig?.enableTTS && voiceConfig.defaultVoice?.trim());
                         return (
                             <div key={blockKey} className={block.type === "user_dialogue" ? "chat-offline-dialogue-bubble chat-offline-dialogue-bubble-user" : "chat-offline-dialogue-bubble chat-offline-dialogue-bubble-char"}>
-                                {playButton}
+                                {canSpeak && speechText && (
+                                    <button
+                                        type="button"
+                                        className="chat-offline-voice-btn"
+                                        onClick={() => {
+                                            if (offlineVoiceBusyId === voiceId) return;
+                                            if (turn.dialogueVoiceRefs?.[voiceKey]) void playOfflineDialogueVoice(turn, speechText, voiceKey, speakerId);
+                                            else setOfflineVoiceConfirm({ turnId: turn.id, key: voiceKey, text: speechText, tone: offlineToneForText(speechText), characterId: speakerId });
+                                        }}
+                                        disabled={offlineVoiceBusyId === voiceId}
+                                        aria-label="播放角色对白"
+                                        title="播放缓存语音；长按生成语音"
+                                    >
+                                        {offlineVoiceBusyId === voiceId ? <Loader2 size={14} className="animate-spin" /> : offlineVoicePlayedIds.has(voiceId) ? <Check size={14} /> : <Volume2 size={14} />}
+                                    </button>
+                                )}
                                 <span className="original" style={{ userSelect: "text", WebkitUserSelect: "text" }}><OfflineAssistantTextBlock text={block.text} defaultExpanded /></span>
                                 {block.translation ? <span className="translation" style={{ userSelect: "none", WebkitUserSelect: "none" }}><OfflineAssistantTextBlock text={block.translation} defaultExpanded={false} /></span> : null}
                             </div>
