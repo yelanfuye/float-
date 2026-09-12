@@ -906,6 +906,18 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
     stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   }, []);
 
+  // 首次进入或切换工坊会话时，总是定位到最新消息；会话内部继续尊重用户主动上滚阅读。
+  useEffect(() => {
+    stickToBottomRef.current = true;
+    const scrollToLatest = () => {
+      const el = bodyRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    };
+    scrollToLatest();
+    const frame = requestAnimationFrame(scrollToLatest);
+    return () => cancelAnimationFrame(frame);
+  }, [snapshot.activeSessionId]);
+
   useEffect(() => {
     const el = bodyRef.current;
     if (el && stickToBottomRef.current) {
