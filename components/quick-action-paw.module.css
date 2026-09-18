@@ -1,0 +1,89 @@
+.pawTheme {
+    --paw-ink: #34483f;
+    --paw-green: #e3eee6;
+    --paw-purple: #756287;
+    --paw-line: #dce4dc;
+}
+
+.pawTheme :global(.quick-action-float-button) {
+    background: linear-gradient(145deg, #e6f1e8bf 8%, #d5e5dc99 58%, #e7ddedb3 100%);
+    color: #756287;
+    border: 1.5px solid #8b789b;
+    border-radius: 50%;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    backdrop-filter: blur(18px) saturate(125%);
+    -webkit-backdrop-filter: blur(18px) saturate(125%);
+    box-shadow: 0 5px 18px #34483f20, inset 0 1px 0 #ffffffb3;
+}
+
+.pawTheme :global(.quick-action-float-button) > svg {
+    width: 29px;
+    height: 29px;
+    fill: #b7a0cb;
+}
+
+.pawTheme :global(.quick-action-popover) {
+    color: var(--paw-ink);
+    background: linear-gradient(135deg, #f1f7efd9, #f2edf6c7);
+    backdrop-filter: blur(24px) saturate(125%);
+    -webkit-backdrop-filter: blur(24px) saturate(125%);
+    border: 1px solid #9c8aa8a6;
+    border-radius: 24px;
+    box-shadow: 0 16px 48px #34483f24;
+    max-width: calc(100% - 24px);
+    max-height: calc(100% - 84px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.pawTheme :global(.quick-action-header) {
+    background: linear-gradient(110deg, #e6eee480, #eee7f280);
+    border-bottom: 1px solid var(--paw-line);
+    flex-shrink: 0;
+}
+
+.pawTheme :global(.quick-action-title-icon) {
+    background: #ffffff99;
+    color: var(--paw-purple);
+}
+
+.pawTheme :global(.quick-action-body) {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    min-height: 0;
+}
+
+.pawTheme :global(.quick-action-tabs) button[data-active="true"],
+.pawTheme :global(.quick-action-option)[data-selected="true"],
+.pawTheme :global(.quick-action-chip)[data-selected="true"] {
+    background: var(--paw-green);
+    border-color: #bacebf;
+    color: #355443;
+}
+
+.pawTheme :global(.quick-action-section-heading),
+.pawTheme :global(.quick-action-clear-btn) {
+    color: var(--paw-purple);
+}
+
+.detail { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.back { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--paw-purple); padding: 6px 0; font-size: 12px; cursor: pointer; }
+.summary { padding: 14px 16px; border: 1px solid #ffffff99; border-radius: 16px; background: linear-gradient(120deg, #e8eee580, #eee8f380); overflow-wrap: anywhere; }
+.bindings { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; max-height: 120px; overflow-y: auto; }
+.bindings li { border: 1px solid #ffffffb3; background: #ffffff66; border-radius: 8px; padding: 4px 7px; font-size: 11px; color: #526658; }
+.summary small { color: #657669; font-size: 11px; }
+.summary h4 { margin: 5px 0; font-size: 16px; color: var(--paw-ink); }
+.summary span { color: var(--paw-purple); font-size: 11px; }
+.field { display: flex; flex-direction: column; gap: 7px; font-size: 12px; font-weight: 600; }
+.field input, .field select { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid #cdd8ce; border-radius: 12px; background: #ffffff; color: #34483f; padding: 11px 12px; font-size: 16px; font-weight: 400; }
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.actions button, .confirm { min-height: 42px; display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #d5cadf; border-radius: 12px; background: #ede7f2; color: #655078; padding: 10px 8px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.confirm { width: 100%; background: #476451; border-color: #476451; color: #fff; }
+.note { margin: 0; font-size: 11px; line-height: 1.7; color: #68756d; }
+.result { margin: 0; padding: 11px 12px; border-radius: 12px; background: #f4e8e6; color: #874e49; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.result[data-ok="true"] { background: #e5eee6; color: #3c6149; }
+.detail button:disabled, .field input:disabled, .field select:disabled { opacity: .55; cursor: not-allowed; }
+.pawTheme button:focus-visible, .field input:focus-visible, .field select:focus-visible { outline: 2px solid #89719d; outline-offset: 3px; }

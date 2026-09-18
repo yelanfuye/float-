@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { loadWeixinBots, loadKeepAlive, type WeixinBotConfig } from "./weixin-storage";
 import { runBotLoop } from "./weixin-bridge";
+import { isAudioPlaybackActive, subscribeAudioPlayback } from "./audio-playback-activity";
 
 export type BotRunStatus = {
     status: "running" | "stopped" | "error";
@@ -72,7 +73,7 @@ function ensureAudioCreated() {
 
 /** 用户触摸时尝试播放（浏览器要求音频必须在用户手势中启动） */
 function onUserGesture() {
-    if (!_keepAliveWanted || !_keepAliveAudio) return;
+    if (!_keepAliveWanted || !_keepAliveAudio || _suspendedForCall || isAudioPlaybackActive()) return;
     _keepAliveAudio.play().then(() => {
         // 成功了，移除监听
         document.removeEventListener("touchstart", onUserGesture, true);
@@ -85,17 +86,26 @@ async function startKeepAlive() {
 
     // Wake Lock
     try {
-        if ("wakeLock" in navigator) {
-            _wakeLock = await navigator.wakeLock.request("screen");
-            _wakeLock.addEventListener("release", () => { _wakeLock = null; });
+        if ("wakeLock" in navigator && !_wakeLock && !_suspendedForCall) {
+            const lock = await navigator.wakeLock.request("screen");
+            if (!_keepAliveWanted || _suspendedForCall || _wakeLock) {
+                void lock.release().catch(() => {});
+            } else {
+                _wakeLock = lock;
+                lock.addEventListener("release", () => { if (_wakeLock === lock) _wakeLock = null; });
+            }
         }
     } catch {}
 
+    // await Wake Lock 期间可能已关闭设置或开始播放，必须重新检查。
+    if (!_keepAliveWanted || _suspendedForCall || isAudioPlaybackActive()) return;
     // 准备音频
     ensureAudioCreated();
 
     // 先尝试直接播放（如果之前已有用户手势则可以成功）
     _keepAliveAudio!.play().catch(() => {
+        // 播放占用或关闭设置引发的中断，不重新注册启动监听。
+        if (!_keepAliveWanted || _suspendedForCall || isAudioPlaybackActive()) return;
         // 失败了：注册监听，等下一次用户触摸时播放
         document.addEventListener("touchstart", onUserGesture, { capture: true, once: false });
         document.addEventListener("click", onUserGesture, { capture: true, once: false });
@@ -104,7 +114,6 @@ async function startKeepAlive() {
 
 function stopKeepAlive() {
     _keepAliveWanted = false;
-    _suspendedForCall = false;
     _wakeLock?.release().catch(() => {});
     _wakeLock = null;
     if (_keepAliveAudio) {
@@ -122,7 +131,6 @@ function stopKeepAlive() {
  * session itself, so keep-alive is redundant meanwhile. No-op if keep-alive is off.
  */
 export function suspendKeepAliveForCall() {
-    if (!_keepAliveWanted) return;
     _suspendedForCall = true;
     _wakeLock?.release().catch(() => {});
     _wakeLock = null;
@@ -199,6 +207,17 @@ export function useWeixinBridge() {
         }
         broadcastStatus();
     }, [bots, startBot]);
+
+    // TTS/试听占用期间只暂停保活音源；最后一个播放结束后才恢复。
+    useEffect(() => subscribeAudioPlayback(() => {
+        if (isAudioPlaybackActive()) {
+            _keepAliveAudio?.pause();
+            document.removeEventListener("touchstart", onUserGesture, true);
+            document.removeEventListener("click", onUserGesture, true);
+        } else if (_keepAliveWanted && !_suspendedForCall) {
+            void startKeepAlive();
+        }
+    }), []);
 
     // 保活管理：只要用户开启保活就启动，不依赖 Bot 是否启用。
     useEffect(() => {

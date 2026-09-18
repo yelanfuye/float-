@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
 import { findCustomStickerByName, resolveCustomStickerUrl } from "@/lib/custom-sticker-storage";
+import { acquireAudioPlayback } from "@/lib/audio-playback-activity";
 import { isMediaStoreRef, loadMediaObjectUrl } from "@/lib/media-cache-storage";
 import { getChatImageFromIndexedDB } from "@/lib/chat-asset-storage";
 import { ChatMessage, createOrGetSession, updateMessageMediaStatus, updateMessageMediaData } from "@/lib/chat-storage";
@@ -2292,6 +2293,7 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
     const [synthesizing, setSynthesizing] = useState(false);
     const [synthFailed, setSynthFailed] = useState(false);
     const audioRef = useRef<HTMLAudioElement | null>(null);
+    const stopVoiceRef = useRef<(() => void) | null>(null);
     const mountedRef = useRef(true);
     useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
     const text = msg.mediaData?.label || "语音消息";
@@ -2305,17 +2307,27 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
         // 必须用 <audio> 元素:iOS 静音拨键会掐掉 Web Audio 的输出(表现为全线
         // 无声),媒体元素不受影响。元素属于宿主页面,锁屏媒体卡片指向站点本身,
         // 点了只会回到 App;播完清 src 让卡片立即撤下。
+        stopVoiceRef.current?.();
         const audio = new Audio(src);
+        const release = acquireAudioPlayback();
         audioRef.current = audio;
         setPlaying(true);
+        let ended = false;
         const finalize = () => {
+            if (ended) return;
+            ended = true;
+            audio.onended = null;
+            audio.onerror = null;
             if (audioRef.current === audio) audioRef.current = null;
+            if (stopVoiceRef.current === finalize) stopVoiceRef.current = null;
             try { audio.pause(); audio.removeAttribute("src"); audio.load(); } catch { /* ignore */ }
-            setPlaying(false);
+            release();
+            if (mountedRef.current) setPlaying(false);
         };
+        stopVoiceRef.current = finalize;
         audio.onended = finalize;
         audio.onerror = finalize;
-        audio.play().catch(finalize);
+        try { void audio.play().catch(finalize); } catch { finalize(); }
     };
 
     // 点击才合成（不再挂载即合成）：已有音频直接播；没有就现场合成一次，
@@ -2323,10 +2335,7 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
     const handlePlay = () => {
         if (synthesizing) return;
         if (playing && audioRef.current) {
-            const active = audioRef.current;
-            audioRef.current = null;
-            try { active.pause(); active.removeAttribute("src"); active.load(); } catch { /* ignore */ }
-            setPlaying(false);
+            stopVoiceRef.current?.();
             return;
         }
         if (msg.mediaUrl && !needsResynthesis) {
@@ -2353,7 +2362,7 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
             });
     };
 
-    useEffect(() => () => { audioRef.current?.pause(); }, []);
+    useEffect(() => () => { stopVoiceRef.current?.(); }, []);
 
     // Wave bars — slightly irregular heights so the idle state already looks intentional.
     const barCount = Math.min(Math.max(4, Math.round(duration / 2)), 9);

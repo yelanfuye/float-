@@ -6,11 +6,14 @@ import { SettingsContext } from "../phone-settings-app";
 import type { VoiceApiConfig } from "@/lib/settings-types";
 import { loadVoiceConfigs, saveVoiceConfigs } from "@/lib/settings-storage";
 import { synthesizeSpeech } from "@/lib/tts-service";
+import { acquireAudioPlayback } from "@/lib/audio-playback-activity";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { Toggle, Input } from "@/components/ui/form";
 import { Alert } from "@/components/ui/feedback";
 
-const SUPPORTED_VOICE_PROVIDERS = new Set(["Minimax", "OpenAI"]);
+import { ElevenLabsOptions } from "./elevenlabs-options";
+
+const SUPPORTED_VOICE_PROVIDERS = new Set(["Minimax", "OpenAI", "ElevenLabs"]);
 const MINIMAX_BASE_URL_OPTIONS = [
     { id: "cn", label: "国内版", baseUrl: "https://api.minimaxi.com/v1" },
     { id: "global", label: "海外版", baseUrl: "https://api.minimax.io/v1" },
@@ -28,6 +31,7 @@ const MINIMAX_PITCH_STEP = 1;
 const DEFAULT_SPEECH_PITCH = 0;
 const VOICE_PROVIDER_OPTIONS = [
     { value: "OpenAI", label: "OpenAI TTS" },
+    { value: "ElevenLabs", label: "ElevenLabs" },
     { value: "MinimaxCN", label: "Minimax 语音国内版" },
     { value: "MinimaxGlobal", label: "Minimax 语音海外版" },
 ];
@@ -221,6 +225,7 @@ function makeCloneVoiceId(config: VoiceApiConfig): string {
 }
 
 function providerSelectValue(config: VoiceApiConfig): string {
+    if (config.provider === "ElevenLabs") return "ElevenLabs";
     if (config.provider === "OpenAI") return "OpenAI";
     return config.baseUrl === GLOBAL_MINIMAX_BASE_URL ? "MinimaxGlobal" : "MinimaxCN";
 }
@@ -241,6 +246,32 @@ export function VoiceSettings() {
     const [manualVoiceIds, setManualVoiceIds] = useState<Record<string, boolean>>({});
     const [isLoaded, setIsLoaded] = useState(false);
     const audioRef = useRef<HTMLAudioElement | null>(null);
+    const previewVersion = useRef(0);
+    const previewController = useRef<AbortController | null>(null);
+    const previewUrl = useRef<string | null>(null);
+    const releasePreview = useRef<(() => void) | null>(null);
+    const stopPreview = useCallback(() => {
+        previewVersion.current += 1;
+        previewController.current?.abort();
+        previewController.current = null;
+        if (audioRef.current) {
+            audioRef.current.onended = null;
+            audioRef.current.onerror = null;
+            audioRef.current.pause();
+            audioRef.current.removeAttribute("src");
+            audioRef.current.load();
+            audioRef.current = null;
+        }
+        if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
+        previewUrl.current = null;
+        releasePreview.current?.();
+        releasePreview.current = null;
+    }, []);
+    useEffect(() => {
+        stopPreview();
+        setPlayingVoiceId(null);
+        return stopPreview;
+    }, [editingId, stopPreview]);
 
     // Fetching states for Voices
     const [isFetching, setIsFetching] = useState<Record<string, boolean>>({});
@@ -299,14 +330,23 @@ export function VoiceSettings() {
     }, [addConfig, setSubpageRightAction]);
 
     const updateConfig = (id: string, updates: Partial<VoiceApiConfig>) => {
+        if (playingVoiceId === id) {
+            stopPreview();
+            setPlayingVoiceId(null);
+        }
         persist(configs.map(c => c.id === id ? { ...c, ...updates } : c));
     };
 
     const updateProvider = (id: string, providerOption: string) => {
         const current = configs.find(c => c.id === id);
+        if (providerOption === "ElevenLabs") {
+            updateConfig(id, { provider: "ElevenLabs", baseUrl: "https://api.elevenlabs.io/v1", apiKey: "", model: "", defaultVoice: "", enableSTT: false, customVoices: [] });
+            return;
+        }
         if (providerOption === "OpenAI") {
             updateConfig(id, {
                 provider: "OpenAI",
+                ...(current?.provider === "ElevenLabs" ? { apiKey: "", enableSTT: true, customVoices: [] } : {}),
                 baseUrl: "https://api.openai.com/v1",
                 model: "tts-1",
                 defaultVoice: "alloy",
@@ -318,6 +358,7 @@ export function VoiceSettings() {
         const wasMinimax = current?.provider === "Minimax";
         updateConfig(id, {
             provider: "Minimax",
+            ...(current?.provider === "ElevenLabs" ? { apiKey: "", enableSTT: true, customVoices: [] } : {}),
             baseUrl: providerOption === "MinimaxGlobal" ? GLOBAL_MINIMAX_BASE_URL : DEFAULT_MINIMAX_BASE_URL,
             model: wasMinimax ? (current?.model || "speech-2.8-turbo") : "speech-2.8-turbo",
             defaultVoice: wasMinimax ? (current?.defaultVoice || "male-qn-qingse") : "male-qn-qingse",
@@ -512,47 +553,45 @@ export function VoiceSettings() {
     };
 
     const togglePreview = async (config: VoiceApiConfig) => {
-        if (playingVoiceId === config.id) {
-            if (audioRef.current) {
-                audioRef.current.pause();
-                audioRef.current = null;
-            }
-            setPlayingVoiceId(null);
-            return;
-        }
-
-        if (audioRef.current) {
-            audioRef.current.pause();
-            audioRef.current = null;
-        }
-
+        const wasPlaying = playingVoiceId === config.id;
+        stopPreview();
+        setPlayingVoiceId(null);
+        if (wasPlaying) return;
+        const version = previewVersion.current;
+        const controller = new AbortController();
+        previewController.current = controller;
         setPlayingVoiceId(config.id);
 
         try {
             const previewText = config.provider === "Minimax" && config.languageBoost
                 ? MINIMAX_PREVIEW_TEXT[config.languageBoost] || "你好，很高兴认识你。这是一段语音试听。"
-                : "你好，我现在是" + (config.defaultVoice || "默认") + "音色。很高兴认识你。";
+                : config.provider === "ElevenLabs"
+                    ? "你好，很高兴认识你。这是一段语音试听。"
+                    : "你好，我现在是" + (config.defaultVoice || "默认") + "音色。很高兴认识你。";
             const blob = await synthesizeSpeech(
                 previewText,
                 config,
+                { signal: controller.signal },
             );
+            if (version !== previewVersion.current) return;
             if (!blob) throw new Error("当前语音配置未返回真实音频");
             const url = URL.createObjectURL(blob);
+            previewUrl.current = url;
 
             const audio = new Audio(url);
             audioRef.current = audio;
-            audio.onended = () => {
+            const finish = () => {
+                if (version !== previewVersion.current) return;
+                stopPreview();
                 setPlayingVoiceId(null);
-                audioRef.current = null;
-                URL.revokeObjectURL(url);
             };
-            audio.onerror = () => {
-                setPlayingVoiceId(null);
-                audioRef.current = null;
-                URL.revokeObjectURL(url);
-            };
+            audio.onended = finish;
+            audio.onerror = finish;
+            releasePreview.current = acquireAudioPlayback();
             await audio.play();
         } catch (e: unknown) {
+            if (version !== previewVersion.current) return;
+            stopPreview();
             const msg = e instanceof Error ? e.message : String(e);
             alert(`语音测试失败: ${msg}`);
             setPlayingVoiceId(null);
@@ -841,7 +880,8 @@ export function VoiceSettings() {
                                             </>
                                         )}
 
-                                        <div className="flex flex-col gap-1">
+                                        {config.provider === "ElevenLabs" && <ElevenLabsOptions key={config.id} config={config} onChange={updates => updateConfig(config.id, updates)} onPreview={() => void togglePreview(config)} playing={playingVoiceId === config.id} />}
+                                        {config.provider !== "ElevenLabs" && <div className="flex flex-col gap-1">
                                             <label className="menu-desc ml-1">默认音色 (Default Voice) 或 自定义 Voice ID</label>
                                             <div className="flex flex-col gap-2">
                                                 <div className="flex gap-2">
@@ -926,6 +966,7 @@ export function VoiceSettings() {
                                             </div>
                                         </div>
 
+                                        }
                                         <div className="ui-toggle-row">
                                             <span className="menu-label font-medium">启用语音合成 (TTS)</span>
                                             <Toggle checked={config.enableTTS} onChange={(v) => updateConfig(config.id, { enableTTS: v })} />
