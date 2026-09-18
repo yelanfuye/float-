@@ -64,6 +64,8 @@ import { SessionCustomCSS } from "@/components/ui/session-custom-css";
 import { STORY_CSS_EXAMPLE } from "@/lib/css-examples";
 import { applyEditOutputRegex } from "@/lib/llm-prompt-assembler";
 import { MacroEngine } from "@/lib/macro-engine";
+import { LocalRecordTools } from "@/components/ui/local-record-tools";
+import { recordPlainText } from "@/lib/local-record-tools";
 
 type StoryAppProps = {
   onClose: () => void;
@@ -385,7 +387,35 @@ export function StoryApp({ onClose }: StoryAppProps) {
     return () => window.removeEventListener("story-session-css-updated", onCSSUpdate);
   }, [activeSessionId]);
 
+  const [locateStoryId, setLocateStoryId] = useState<string | null>(null);
+  const [storyHighlightId, setStoryHighlightId] = useState<string | null>(null);
   const autoBottomLockRef = useRef(true);
+  const storyRecords = useMemo(() => messages.map((message, index) => {
+    const speaker = message.role === "system" ? "系统" : message.role === "user" ? (userIdentity?.name || "我") : (currentCharacter?.name || "角色");
+    const body = recordPlainText(message.renderedContent || message.rawContent);
+    const summary = recordPlainText(message.storySummary || "");
+    const label = `第 ${index + 1} 段 · ${speaker}`;
+    const time = `${formatStoryTime(message.createdAt)} (${message.createdAt})`;
+    return { id: message.id, label, time, text: `${body}${summary ? `\n\n摘要：\n${summary}` : ""}`, searchText: [currentSession?.title, label, time, body, message.rawContent, recordPlainText(message.rawContent), summary].join("\n") };
+  }), [messages, userIdentity?.name, currentCharacter?.name, currentSession?.title]);
+  useLayoutEffect(() => {
+    if (!locateStoryId) return;
+    const frame = requestAnimationFrame(() => {
+      const node = scrollRef.current;
+      const target = document.getElementById(`story-message-${locateStoryId}`);
+      if (!node || !target || !node.contains(target)) return;
+      autoBottomLockRef.current = false;
+      node.scrollTop += target.getBoundingClientRect().top - node.getBoundingClientRect().top - 32;
+      setStoryHighlightId(locateStoryId);
+      setLocateStoryId(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [locateStoryId, visibleMessageCount]);
+  useEffect(() => {
+    if (!storyHighlightId) return;
+    const timer = setTimeout(() => setStoryHighlightId(null), 2400);
+    return () => clearTimeout(timer);
+  }, [storyHighlightId]);
   const foldToggleSuppressUntilRef = useRef(0);
   // 段落编辑期间：贴底锁必须关掉，否则编辑框自适应高度每次变化都会被
   // ResizeObserver 拽到底部（表现为"一打字就滚到底"）
@@ -997,6 +1027,15 @@ export function StoryApp({ onClose }: StoryAppProps) {
 
         <div className="story-drawer-section">
           <div className="story-drawer-eyebrow">工具</div>
+          <LocalRecordTools key={activeSessionId} title={currentSession.title || `${currentCharacter.name}的剧情`} records={storyRecords} onLocate={id => {
+            const index = messages.findIndex(message => message.id === id);
+            if (index < 0) return;
+            autoBottomLockRef.current = false;
+            loadMoreRestoreRef.current = null;
+            setVisibleMessageCount(count => Math.max(count, messages.length - index));
+            setDrawerOpen(false);
+            setLocateStoryId(id);
+          }} />
           <button
             className="story-tool-btn"
             onClick={() => {
@@ -1113,6 +1152,8 @@ export function StoryApp({ onClose }: StoryAppProps) {
                   return (
                     <article
                       key={message.id}
+                      id={`story-message-${message.id}`}
+                      style={storyHighlightId === message.id ? { outline: "2px solid currentColor", outlineOffset: 4 } : undefined}
                       className="story-row"
                       data-role={message.role}
                       onPointerDown={(e) => handleMsgPointerDown(e, message.id)}

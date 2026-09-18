@@ -88,6 +88,8 @@ import { extractTextToolDirectiveText } from "@/lib/text-tool-protocol";
 import { emitChatPluginEvent, getChatPluginHookBus, runChatPluginTransform } from "@/lib/chat-plugin-hooks";
 import { CHAT_PLUGIN_TOAST_EVENT, getChatPluginRuntime } from "@/lib/chat-plugin-runtime";
 import { ChatPluginSlot } from "@/components/chat/chat-plugin-slot";
+import { LocalRecordTools } from "@/components/ui/local-record-tools";
+import { recordPlainText } from "@/lib/local-record-tools";
 
 // ── Call system message detection ──────────────────────────
 // Call messages are stored with user/assistant role for correct prompt alternation,
@@ -1091,6 +1093,32 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const [theaterMode, setTheaterMode] = useState(() => kvGet(CHAT_THEATER_MODE_PREFIX + session.id) === "1");
     const [offlineTurns, setOfflineTurns] = useState<ChatOfflineTurn[]>([]);
     const [offlineVisibleCount, setOfflineVisibleCount] = useState(OFFLINE_INITIAL_LOAD);
+    const [offlineLocateId, setOfflineLocateId] = useState<string | null>(null);
+    const [offlineHighlightId, setOfflineHighlightId] = useState<string | null>(null);
+    const offlineRecords = useMemo(() => offlineTurns.map((turn, index) => {
+        const speaker = session.isGroup ? (session.groupName || "群聊") : (character?.name || "角色");
+        const text = `用户行动：\n${recordPlainText(turn.userContent)}\n\n${speaker}：\n${recordPlainText(turn.assistantContent)}\n\n摘要：\n${recordPlainText(turn.summary)}`;
+        const label = `第 ${index + 1} 回合 · ${speaker}`;
+        const time = `${formatChatUiTime(turn.createdAt)} (${turn.createdAt})`;
+        return { id: turn.id, label, time, text, searchText: [label, time, text, turn.rawText, recordPlainText(turn.rawText || "")].join("\n") };
+    }), [offlineTurns, session.isGroup, session.groupName, character?.name]);
+    useLayoutEffect(() => {
+        if (!offlineLocateId || !offlineMode) return;
+        const frame = requestAnimationFrame(() => {
+            const node = scrollRef.current;
+            const target = document.getElementById(`offline-record-${offlineLocateId}`);
+            if (!node || !target || !node.contains(target)) return;
+            scrollElementWithinContainer(node, target);
+            setOfflineHighlightId(offlineLocateId);
+            setOfflineLocateId(null);
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [offlineLocateId, offlineVisibleCount, offlineMode]);
+    useEffect(() => {
+        if (!offlineHighlightId) return;
+        const timer = setTimeout(() => setOfflineHighlightId(null), 2400);
+        return () => clearTimeout(timer);
+    }, [offlineHighlightId]);
     const [pendingOfflineUserText, setPendingOfflineUserText] = useState("");
     const [isOfflineGenerating, setIsOfflineGenerating] = useState(false);
     // 流式生成预览：线上（单聊/群聊）与线下各一份，生成中实时刷新，结束后清空
@@ -5470,6 +5498,17 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                 线下模式
                             </div>
                         ) : null}
+                        <LocalRecordTools
+                            key={`offline-tools-${session.id}`}
+                            title={`${character?.name || session.alias || "线下记录"}线下记录`}
+                            records={offlineRecords}
+                            onLocate={(id) => {
+                                const index = offlineTurns.findIndex(turn => turn.id === id);
+                                if (index < 0) return;
+                                setOfflineVisibleCount(count => Math.max(count, offlineTurns.length - index));
+                                setOfflineLocateId(id);
+                            }}
+                        />
                         {hasMoreOfflineTurns && (
                             <button
                                 type="button"
@@ -5490,7 +5529,11 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                             return (
                             <Fragment key={turn.id}>
                             {showTime && <div className="chat-offline-time">{formatChatUiTime(turn.createdAt)}</div>}
-                            <div className="chat-offline-turn">
+                            <div
+                                id={`offline-record-${turn.id}`}
+                                className="chat-offline-turn"
+                                style={offlineHighlightId === turn.id ? { outline: "2px solid currentColor", outlineOffset: 4 } : undefined}
+                            >
                                 <div className="chat-offline-entry" data-role="user" style={offlineDisplay.userContent.trim() ? undefined : { display: "none" }}>
                                     {/* 头像占位：默认 display:none（见 chat.css），供自定义 CSS 显示 */}
                                     <div className="chat-offline-avatar" aria-hidden="true">

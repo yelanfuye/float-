@@ -908,10 +908,12 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
 
   useEffect(() => {
     const el = bodyRef.current;
-    if (el && stickToBottomRef.current) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [messages]);
+    if (!el || !stickToBottomRef.current) return;
+    const scrollToLatest = () => { if (stickToBottomRef.current) el.scrollTop = el.scrollHeight; };
+    scrollToLatest();
+    const timers = [80, 300, 800].map(delay => window.setTimeout(scrollToLatest, delay));
+    return () => timers.forEach(window.clearTimeout);
+  }, [messages, snapshot.activeSessionId]);
 
   const autoGrow = useCallback(() => {
     const el = textareaRef.current;
