@@ -1,6 +1,8 @@
 // lib/tts-service.ts — 语音合成服务
 
 import type { VoiceApiConfig, ContentAppId } from "./settings-types";
+import { synthesizeElevenSpeech } from "./elevenlabs-service";
+import { acquireAudioPlayback } from "./audio-playback-activity";
 import { loadVoiceConfigs, loadBindingConfig, resolveBinding } from "./settings-storage";
 
 export type VoiceApiConfigResolved = VoiceApiConfig;
@@ -29,11 +31,12 @@ export function resolveVoiceConfig(characterId: string, appId?: ContentAppId): V
 export async function synthesizeSpeech(
     text: string,
     voiceConfig: VoiceApiConfig,
-    options?: { emotion?: string },
+    options?: { emotion?: string; signal?: AbortSignal },
 ): Promise<Blob | null> {
     if (!text.trim()) return null;
 
     const provider = voiceConfig.provider;
+    if (provider === "ElevenLabs") return synthesizeElevenSpeech(text, voiceConfig, options?.signal);
 
     if (provider === "Minimax") {
         return synthesizeMinimax(text, voiceConfig, options?.emotion);
@@ -352,12 +355,16 @@ export function playAudioBlobViaMediaElement(blob: Blob): { promise: Promise<voi
     return playAudioBlobElement(blob);
 }
 
+let activeMediaAbort: (() => void) | null = null;
+
 function playAudioBlobElement(blob: Blob): { promise: Promise<void>; abort: () => void } {
+    activeMediaAbort?.();
     const url = URL.createObjectURL(blob);
     const audio = getSharedAudio();
     audio.muted = false;
     audio.volume = _ttsVolume;
     audio.src = url;
+    const releasePlayback = acquireAudioPlayback();
 
     let settled = false;
     let resolveFn: () => void = () => {};
@@ -368,15 +375,16 @@ function playAudioBlobElement(blob: Blob): { promise: Promise<void>; abort: () =
         audio.onerror = null;
         URL.revokeObjectURL(url);
         try { audio.pause(); audio.removeAttribute("src"); audio.load(); } catch {}
+        if (activeMediaAbort === finalize) activeMediaAbort = null;
+        releasePlayback();
         resolveFn();
     };
     const promise = new Promise<void>((resolve) => {
         resolveFn = resolve;
+        activeMediaAbort = finalize;
         audio.onended = finalize;
         audio.onerror = finalize;
-        audio.play().catch(() => {
-            finalize();
-        });
+        try { void audio.play().catch(finalize); } catch { finalize(); }
     });
     return { promise, abort: finalize };
 }
@@ -390,6 +398,7 @@ function playAudioBlobElement(blob: Blob): { promise: Promise<void>; abort: () =
 export function playAudioBlob(blob: Blob): { promise: Promise<void>; abort: () => void } {
     const ctx = getAudioContext();
     if (!ctx) return playAudioBlobElement(blob);
+    const releasePlayback = acquireAudioPlayback();
 
     let settled = false;
     let resolveFn: () => void = () => {};
@@ -417,6 +426,7 @@ export function playAudioBlob(blob: Blob): { promise: Promise<void>; abort: () =
         settled = true;
         cleanupWebAudio();
         if (fallbackAbort) { fallbackAbort(); fallbackAbort = null; }
+        releasePlayback();
         resolveFn();
     };
 
@@ -457,6 +467,7 @@ export function playAudioBlob(blob: Blob): { promise: Promise<void>; abort: () =
                     if (settled) return;
                     settled = true;
                     fallbackAbort = null;
+                    releasePlayback();
                     resolveFn();
                 });
             }

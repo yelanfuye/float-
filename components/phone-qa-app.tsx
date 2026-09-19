@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 // CommonMark 的 flanking 规则会让 **「加粗」** 这类紧贴全角标点的写法解析失败
@@ -841,6 +841,11 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const stickToBottomRef = useRef(true);
+  const scrollFrameRef = useRef<number | null>(null);
+  const readingAnchorRef = useRef<{ node: HTMLElement; offset: number } | null>(null);
+  const userScrollUntilRef = useRef(0);
+  const lastScrollTopRef = useRef(0);
+  const scrollMetricsRef = useRef({ height: 0, width: 0, content: 0 });
 
   const refreshComposerMeta = useCallback(() => {
     setApiReady(resolveQaApiConfig() != null);
@@ -899,19 +904,130 @@ export function PhoneQaApp({ onClose, onNotice }: PhoneQaAppProps) {
     [previewItem],
   );
 
-  // 自动滚动：用户上滚阅读时不拉回底部
+  const cancelBottomScroll = useCallback(() => {
+    if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
+    scrollFrameRef.current = null;
+  }, []);
+
+  const rememberReadingPosition = useCallback(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    // offsetTop 使用容器内布局坐标，不受桌面整体缩放影响。
+    const nodes = Array.from(el.querySelectorAll<HTMLElement>(".qa-msg-wrap"));
+    const node = nodes.find((item) => item.offsetTop + item.offsetHeight > el.scrollTop);
+    readingAnchorRef.current = node ? { node, offset: node.offsetTop - el.scrollTop } : null;
+    lastScrollTopRef.current = el.scrollTop;
+    scrollMetricsRef.current = { height: el.clientHeight, width: el.clientWidth, content: el.scrollHeight };
+  }, []);
+
   const handleScroll = useCallback(() => {
     const el = bodyRef.current;
     if (!el) return;
-    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-  }, []);
+    const old = scrollMetricsRef.current;
+    const layoutChanged = old.height !== el.clientHeight || old.width !== el.clientWidth || old.content !== el.scrollHeight;
+    const moved = Math.abs(el.scrollTop - lastScrollTopRef.current) > 0.5;
+    // 程序滚动、图片撑高和窗口变化不改变跟随状态。
+    if (!layoutChanged && moved && performance.now() < userScrollUntilRef.current) {
+      const distance = Math.max(0, el.scrollHeight - el.scrollTop - el.clientHeight);
+      if (distance < 64) stickToBottomRef.current = true;
+      else if (distance > 96) stickToBottomRef.current = false;
+      // [64, 96] 保持原状态，包括两个边界值。
+      userScrollUntilRef.current = performance.now() + 250;
+      cancelBottomScroll();
+      rememberReadingPosition();
+    }
+    lastScrollTopRef.current = el.scrollTop;
+  }, [cancelBottomScroll, rememberReadingPosition]);
+
+  const scheduleScrollToBottom = useCallback(() => {
+    if (!stickToBottomRef.current || scrollFrameRef.current !== null) return;
+    // 两帧都记录句柄；上翻、切会话和卸载都能取消，不使用强制滚动回调。
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = requestAnimationFrame(() => {
+        scrollFrameRef.current = null;
+        const el = bodyRef.current;
+        if (!el || !stickToBottomRef.current || performance.now() < userScrollUntilRef.current) return;
+        el.scrollTop = el.scrollHeight;
+        rememberReadingPosition();
+      });
+    });
+  }, [rememberReadingPosition]);
+
+  useLayoutEffect(() => {
+    cancelBottomScroll();
+    stickToBottomRef.current = true;
+    readingAnchorRef.current = null;
+    userScrollUntilRef.current = 0;
+    if (snapshot.hydrated) scheduleScrollToBottom();
+    return cancelBottomScroll;
+  }, [snapshot.activeSessionId, snapshot.hydrated, cancelBottomScroll, scheduleScrollToBottom]);
+
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const preserveOrFollow = () => {
+      if (stickToBottomRef.current) {
+        scheduleScrollToBottom();
+      } else {
+        const anchor = readingAnchorRef.current;
+        if (anchor?.node.isConnected && el.contains(anchor.node)) {
+          el.scrollTop = anchor.node.offsetTop - anchor.offset;
+        }
+        rememberReadingPosition();
+      }
+    };
+    preserveOrFollow();
+    // ResizeObserver 仅处理布局补偿，不决定是否进入跟随；不用 IntersectionObserver。
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(preserveOrFollow) : null;
+    observer?.observe(el);
+    el.querySelectorAll<HTMLElement>(".qa-messages, .qa-msg-wrap").forEach((node) => observer?.observe(node));
+    el.addEventListener("load", preserveOrFollow, true);
+    return () => {
+      observer?.disconnect();
+      el.removeEventListener("load", preserveOrFollow, true);
+    };
+  }, [messages, rememberReadingPosition, scheduleScrollToBottom]);
 
   useEffect(() => {
     const el = bodyRef.current;
-    if (el && stickToBottomRef.current) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [messages]);
+    if (!el) return;
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
+    const markUserScroll = () => {
+      userScrollUntilRef.current = performance.now() + 500;
+      cancelBottomScroll();
+      rememberReadingPosition();
+      clearTimeout(settleTimer);
+      const settle = () => {
+        const remaining = userScrollUntilRef.current - performance.now();
+        if (remaining > 0) {
+          settleTimer = setTimeout(settle, remaining + 16);
+          return;
+        }
+        scheduleScrollToBottom();
+      };
+      settleTimer = setTimeout(settle, 516);
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      if (event.buttons) markUserScroll();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markUserScroll();
+    };
+    el.addEventListener("wheel", markUserScroll, { passive: true });
+    el.addEventListener("touchmove", markUserScroll, { passive: true });
+    el.addEventListener("pointerdown", markUserScroll, { passive: true });
+    el.addEventListener("pointermove", onPointerMove, { passive: true });
+    el.addEventListener("keydown", onKey);
+    return () => {
+      clearTimeout(settleTimer);
+      cancelBottomScroll();
+      el.removeEventListener("wheel", markUserScroll);
+      el.removeEventListener("touchmove", markUserScroll);
+      el.removeEventListener("pointerdown", markUserScroll);
+      el.removeEventListener("pointermove", onPointerMove);
+      el.removeEventListener("keydown", onKey);
+    };
+  }, [snapshot.activeSessionId, cancelBottomScroll, rememberReadingPosition, scheduleScrollToBottom]);
 
   const autoGrow = useCallback(() => {
     const el = textareaRef.current;

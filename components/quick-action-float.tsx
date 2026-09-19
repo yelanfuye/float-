@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type CSSProperties } from "react";
-import { BookOpen, Check, ChevronDown, Code2, SlidersHorizontal, UserRound, X } from "lucide-react";
+import { BookOpen, Check, ChevronDown, Code2, UserRound, X } from "lucide-react";
+import { QuickApiPanel } from "./quick-api-panel";
+import styles from "./quick-action-paw.module.css";
 import { CHAT_APP_SETTINGS_UPDATED_EVENT, loadChatAppSettings } from "@/lib/chat-storage";
 import {
     getFloatingDockState,
@@ -18,6 +20,7 @@ import {
     loadBindingConfig,
     loadWorldBooks,
     saveBindingConfig,
+    saveApiConfigs,
     setCharacterBinding,
 } from "@/lib/settings-storage";
 import type { ApiConfig, BindingConfig, BindingSlot, WorldBookConfig } from "@/lib/settings-types";
@@ -55,9 +58,24 @@ function getStatusSafeTop(element: HTMLElement): number {
     return Math.max(72, (Number.isFinite(safeAreaTop) ? safeAreaTop : 48) + 18);
 }
 
+function CatPaw({ size = 24 }: { size?: number; strokeWidth?: number }) {
+    return <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" fill="#b7a0cb" stroke="#80668f" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round">
+        <ellipse cx="6.4" cy="12.3" rx="3" ry="3.5" transform="rotate(-25 6.4 12.3)" />
+        <ellipse cx="12.5" cy="7.4" rx="3" ry="3.6" transform="rotate(-8 12.5 7.4)" />
+        <ellipse cx="20" cy="7.4" rx="3" ry="3.6" transform="rotate(8 20 7.4)" />
+        <ellipse cx="26" cy="12.3" rx="3" ry="3.5" transform="rotate(25 26 12.3)" />
+        <path d="M16 14.4c-3.6 0-4.4 3-7.2 5.8-3.4 3.4-1.8 8.1 2.6 8.1 2 0 2.8-1 4.6-1s2.6 1 4.6 1c4.4 0 6-4.7 2.6-8.1-2.8-2.8-3.6-5.8-7.2-5.8Z" />
+        <path d="M11.4 21.5c.6-1.1 1.2-1.9 2-2.5" fill="none" stroke="#eee4f5" strokeWidth="1.7" />
+    </svg>;
+}
+
 export function QuickActionFloat() {
     const [enabled, setEnabled] = useState(false);
     const [open, setOpen] = useState(false);
+    const [editingApi, setEditingApi] = useState<ApiConfig | null>(null);
+    useEffect(() => {
+        if (!open || !enabled) setEditingApi(null);
+    }, [open, enabled]);
     const [scope, setScope] = useState<QuickScope>("global");
     const [selectedCharId, setSelectedCharId] = useState("");
     const [config, setConfig] = useState<BindingConfig>(EMPTY_BINDING_CONFIG);
@@ -103,7 +121,8 @@ export function QuickActionFloat() {
                 : settings.quickActionEnabled === true;
             setEnabled(nextEnabled);
             setPromptViewerEnabled(typeof detail?.promptViewerEnabled === "boolean" ? detail.promptViewerEnabled : settings.promptViewerEnabled === true);
-            setFloatingDockEnabled(typeof detail?.floatingDockEnabled === "boolean" ? detail.floatingDockEnabled : settings.floatingDockEnabled === true);
+            // 猫爪独立自由悬停，不参与双球贴边停靠。
+            setFloatingDockEnabled(false);
             if (!nextEnabled) setOpen(false);
         };
         syncEnabled();
@@ -152,6 +171,24 @@ export function QuickActionFloat() {
         };
     }, [floatingDockEnabled, dockState.isExpanded, open]);
 
+    // 自由悬停的位置在旋屏或容器缩小时仍保持在可见范围。
+    useLayoutEffect(() => {
+        if (!enabled) return;
+        const layer = layerRef.current;
+        if (!layer) return;
+        const apply = () => {
+            const rect = layer.getBoundingClientRect();
+            setFloatingPosition(previous => previous ? {
+                left: clampFloatingPosition(previous.left, Math.max(12, rect.width - 68)),
+                top: clampFloatingPosition(previous.top, Math.max(12, rect.height - 68)),
+            } : null);
+        };
+        const observer = new ResizeObserver(apply);
+        observer.observe(layer);
+        window.addEventListener("resize", apply);
+        return () => { observer.disconnect(); window.removeEventListener("resize", apply); };
+    }, [enabled]);
+
     // 贴边坐标是按像素持久化的，换了视口尺寸要先夹回屏幕内，否则球可能落在屏幕外碰不到
     useLayoutEffect(() => {
         if (!floatingDockEnabled) return;
@@ -177,7 +214,7 @@ export function QuickActionFloat() {
         const buttonRect = button.getBoundingClientRect();
         const posAnchor = (draggingFloatingButton && floatingPosition)
             ? floatingPosition
-            : (dockState.anchorPosition)
+            : (floatingDockEnabled && dockState.anchorPosition)
                 ? dockState.anchorPosition
                 : (floatingPosition ?? {
                     left: buttonRect.left - rect.left,
@@ -193,7 +230,7 @@ export function QuickActionFloat() {
             left: Math.min(Math.max(12, left), Math.max(12, rect.width - width - 12)),
             top: Math.min(Math.max(statusSafeTop, top), maxTop),
         });
-    }, [open, floatingPosition, dockState.anchorPosition, draggingFloatingButton]);
+    }, [open, floatingPosition, dockState.anchorPosition, draggingFloatingButton, floatingDockEnabled]);
 
     const currentSlot: BindingSlot = useMemo(() => {
         if (scope === "global") return config.globalDefaults || {};
@@ -229,6 +266,30 @@ export function QuickActionFloat() {
             defaults: { ...binding.defaults, apiConfigId: apiConfigId || undefined },
         }));
     }, [config, persistConfig, scope, selectedCharId]);
+
+    function confirmApiModel(model: string): string | void {
+        if (!editingApi) return "请重新选择 API 预设";
+        const latestApis = loadApiConfigs();
+        const latestApi = latestApis.find(api => api.id === editingApi.id);
+        if (!latestApi) return "这份 API 预设已删除，请返回重新选择";
+        if (latestApi.apiKey !== editingApi.apiKey || latestApi.baseUrl !== editingApi.baseUrl || latestApi.provider !== editingApi.provider || latestApi.defaultModel !== editingApi.defaultModel) {
+            return "这份 API 预设已在其他位置修改，请返回重新打开";
+        }
+        if (scope === "character" && !loadCharacters().some(character => character.id === selectedCharId)) return "该角色已删除，请返回重新选择";
+        const latestBindings = loadBindingConfig();
+        const nextApis = latestApis.map(api => api.id === editingApi.id ? { ...api, defaultModel: model } : api);
+        let nextBindings: BindingConfig;
+        if (scope === "global") {
+            nextBindings = { ...latestBindings, globalDefaults: { ...latestBindings.globalDefaults, apiConfigId: editingApi.id } };
+        } else {
+            const binding = getCharacterBinding(latestBindings, selectedCharId);
+            nextBindings = setCharacterBinding(latestBindings, { ...binding, defaults: { ...binding.defaults, apiConfigId: editingApi.id } });
+        }
+        saveApiConfigs(nextApis);
+        setApiConfigs(nextApis);
+        persistConfig(nextBindings);
+        setEditingApi(null);
+    }
 
     const updateWorldBooks = useCallback((worldBookIds: string[]) => {
         const nextIds = worldBookIds.length > 0 ? worldBookIds : undefined;
@@ -275,7 +336,7 @@ export function QuickActionFloat() {
     function handleFloatingPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
         const isDual = floatingDockEnabled && promptViewerEnabled && enabled;
         const isQuickPrimary = !isDual || dockState.primaryTool === "quick-action";
-        if (dockState.isExpanded || (isDual && !isQuickPrimary)) {
+        if (floatingDockEnabled && (dockState.isExpanded || (isDual && !isQuickPrimary))) {
             // 展开挑选模式、或并非当前停靠的主球时，不接受拖拽
             return;
         }
@@ -433,7 +494,7 @@ export function QuickActionFloat() {
     }
 
     return (
-        <div className="quick-action-layer" ref={layerRef}>
+        <div className={`quick-action-layer ${styles.pawTheme}`} ref={layerRef}>
             <button
                 ref={floatingButtonRef}
                 type="button"
@@ -449,7 +510,7 @@ export function QuickActionFloat() {
                 onClick={handleFloatingButtonClick}
                 style={buttonStyle}
             >
-                <SlidersHorizontal size={24} strokeWidth={1.9} />
+                <CatPaw size={24} strokeWidth={1.9} />
             </button>
 
             {open ? (
@@ -463,7 +524,7 @@ export function QuickActionFloat() {
                 >
                     <div className="quick-action-header">
                         <div className="quick-action-title">
-                            <span className="quick-action-title-icon"><SlidersHorizontal size={18} /></span>
+                            <span className="quick-action-title-icon"><CatPaw size={18} /></span>
                             <div>
                                 <h3>快捷操作</h3>
                                 <p>{scope === "global" ? "全局默认" : selectedCharacter?.name || "角色默认"}</p>
@@ -475,6 +536,15 @@ export function QuickActionFloat() {
                     </div>
 
                     <div className="quick-action-body">
+                        {editingApi ? (
+                            <QuickApiPanel
+                                key={editingApi.id}
+                                config={editingApi}
+                                scopeLabel={scope === "global" ? "全局默认" : `${selectedCharacter?.name || "角色"}的默认配置`}
+                                onBack={() => { setEditingApi(null); reloadData(); }}
+                                onConfirm={confirmApiModel}
+                            />
+                        ) : <>
                         <div className="quick-action-tabs" role="tablist" aria-label="绑定范围">
                             <button
                                 type="button"
@@ -537,7 +607,7 @@ export function QuickActionFloat() {
                                         className="quick-action-option"
                                         data-selected={currentSlot.apiConfigId === api.id}
                                         disabled={characterDisabled}
-                                        onClick={() => updateApiConfig(api.id)}
+                                        onClick={() => setEditingApi({ ...api })}
                                     >
                                         <span>{api.name || api.defaultModel || api.provider}</span>
                                         {currentSlot.apiConfigId === api.id ? <Check size={15} /> : null}
@@ -591,6 +661,7 @@ export function QuickActionFloat() {
                                 </div>
                             )}
                         </section>
+                        </>}
                     </div>
                 </div>
             ) : null}
