@@ -59,13 +59,17 @@ function getStatusSafeTop(element: HTMLElement): number {
 }
 
 function CatPaw({ size = 24 }: { size?: number; strokeWidth?: number }) {
-    return <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" fill="#b7a0cb" stroke="#80668f" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round">
-        <ellipse cx="6.4" cy="12.3" rx="3" ry="3.5" transform="rotate(-25 6.4 12.3)" />
-        <ellipse cx="12.5" cy="7.4" rx="3" ry="3.6" transform="rotate(-8 12.5 7.4)" />
-        <ellipse cx="20" cy="7.4" rx="3" ry="3.6" transform="rotate(8 20 7.4)" />
-        <ellipse cx="26" cy="12.3" rx="3" ry="3.5" transform="rotate(25 26 12.3)" />
-        <path d="M16 14.4c-3.6 0-4.4 3-7.2 5.8-3.4 3.4-1.8 8.1 2.6 8.1 2 0 2.8-1 4.6-1s2.6 1 4.6 1c4.4 0 6-4.7 2.6-8.1-2.8-2.8-3.6-5.8-7.2-5.8Z" />
-        <path d="M11.4 21.5c.6-1.1 1.2-1.9 2-2.5" fill="none" stroke="#eee4f5" strokeWidth="1.7" />
+    const pads = <>
+        <circle cx="7.6" cy="23" r="4.5" />
+        <circle cx="16.7" cy="12.9" r="4.7" />
+        <circle cx="30.2" cy="11.8" r="4.6" />
+        <circle cx="40.4" cy="21.4" r="4.5" />
+        <ellipse cx="24" cy="30.8" rx="11.6" ry="8.7" transform="rotate(-6 24 30.8)" />
+    </>;
+    return <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
+        <g transform="translate(.5 1.1)" fill="#697c6e" stroke="#697c6e" strokeWidth="3.8" opacity=".16">{pads}</g>
+        <g fill="#66816d" stroke="#fff" strokeWidth="3.3">{pads}</g>
+        <g fill="#66816d" stroke="#4f6b57" strokeWidth=".65">{pads}</g>
     </svg>;
 }
 
@@ -179,8 +183,8 @@ export function QuickActionFloat() {
         const apply = () => {
             const rect = layer.getBoundingClientRect();
             setFloatingPosition(previous => previous ? {
-                left: clampFloatingPosition(previous.left, Math.max(12, rect.width - 68)),
-                top: clampFloatingPosition(previous.top, Math.max(12, rect.height - 68)),
+                left: clampFloatingPosition(previous.left, Math.max(12, rect.width - (floatingButtonRef.current?.offsetWidth || 44) - 12)),
+                top: clampFloatingPosition(previous.top, Math.max(12, rect.height - (floatingButtonRef.current?.offsetHeight || 44) - 12)),
             } : null);
         };
         const observer = new ResizeObserver(apply);
@@ -326,8 +330,8 @@ export function QuickActionFloat() {
         return {
             left,
             top,
-            maxLeft: Math.max(12, parentRect.width - 56 - 12),
-            maxTop: Math.max(12, parentRect.height - 56 - 12),
+            maxLeft: Math.max(12, parentRect.width - button.offsetWidth - 12),
+            maxTop: Math.max(12, parentRect.height - button.offsetHeight - 12),
             parentWidth: parentRect.width,
             parentHeight: parentRect.height,
         };
@@ -392,7 +396,7 @@ export function QuickActionFloat() {
                 const currentX = drag.left + (event.clientX - drag.startClientX);
                 const currentTop = drag.top + (event.clientY - drag.startClientY);
                 const isLeft = currentX < midX;
-                const snappedLeft = isLeft ? 18 : Math.max(18, bounds.parentWidth - 56 - 18);
+                const snappedLeft = isLeft ? 18 : Math.max(18, bounds.parentWidth - event.currentTarget.offsetWidth - 18);
                 const snappedTop = clampFloatingPosition(currentTop, bounds.maxTop);
                 const newPos = { left: snappedLeft, top: snappedTop };
                 setFloatingPosition(newPos);

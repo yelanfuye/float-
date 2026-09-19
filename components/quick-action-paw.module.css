@@ -6,32 +6,39 @@
 }
 
 .pawTheme :global(.quick-action-float-button) {
-    background: linear-gradient(145deg, #e6f1e8bf 8%, #d5e5dc99 58%, #e7ddedb3 100%);
-    color: #756287;
-    border: 1.5px solid #8b789b;
+    box-sizing: border-box;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    background: linear-gradient(145deg, #f5faf6f2, #dde9dfbf);
+    color: #4f6b57;
+    border: 1.5px solid #637e6b;
     border-radius: 50%;
     touch-action: none;
     user-select: none;
     -webkit-user-select: none;
     backdrop-filter: blur(18px) saturate(125%);
     -webkit-backdrop-filter: blur(18px) saturate(125%);
-    box-shadow: 0 5px 18px #34483f20, inset 0 1px 0 #ffffffb3;
+    box-shadow: inset 0 1px 2px #fff, inset 0 -2px 4px #637e6b15, 0 3px 9px #405c491a;
 }
 
 .pawTheme :global(.quick-action-float-button) > svg {
-    width: 29px;
-    height: 29px;
-    fill: #b7a0cb;
+    width: 36px;
+    height: 36px;
+    pointer-events: none;
+    filter: drop-shadow(0 1px 1px #405c4926);
 }
 
 .pawTheme :global(.quick-action-popover) {
-    color: var(--paw-ink);
-    background: linear-gradient(135deg, #f1f7efd9, #f2edf6c7);
-    backdrop-filter: blur(24px) saturate(125%);
-    -webkit-backdrop-filter: blur(24px) saturate(125%);
-    border: 1px solid #9c8aa8a6;
-    border-radius: 24px;
-    box-shadow: 0 16px 48px #34483f24;
+    color: #303237;
+    background: #f8f9fbb8;
+    backdrop-filter: blur(24px) saturate(65%);
+    -webkit-backdrop-filter: blur(24px) saturate(65%);
+    border: 1px solid #ffffffd9;
+    border-radius: 20px;
+    box-shadow: 0 0 0 1px #5a5f691f, 0 14px 36px #1e232d21, inset 0 1px 0 #ffffffe6;
     max-width: calc(100% - 24px);
     max-height: calc(100% - 84px);
     display: flex;
@@ -40,15 +47,28 @@
 }
 
 .pawTheme :global(.quick-action-header) {
-    background: linear-gradient(110deg, #e6eee480, #eee7f280);
-    border-bottom: 1px solid var(--paw-line);
+    padding: 7px 12px;
+    min-height: 0;
+    gap: 8px;
+    background: #ffffff52;
+    border-bottom: 1px solid #6469731f;
     flex-shrink: 0;
 }
 
+.pawTheme :global(.quick-action-title) { gap: 8px; }
+.pawTheme :global(.quick-action-title) h3 { margin: 0; font-size: 13px; line-height: 1.3; color: #303237; }
+.pawTheme :global(.quick-action-title) p { margin: 2px 0 0; font-size: 10px; line-height: 1.2; color: #7a7e85; }
+.pawTheme :global(.quick-action-icon-btn) { width: 36px; height: 36px; min-height: 36px; background: transparent; color: #747880; }
 .pawTheme :global(.quick-action-title-icon) {
-    background: #ffffff99;
-    color: var(--paw-purple);
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    background: transparent;
 }
+.pawTheme :global(.quick-action-title-icon) > svg { width: 26px; height: 26px; }
+.pawTheme :global(.quick-action-tabs) { background: #e3e5e870; }
+.pawTheme :global(.quick-action-option),
+.pawTheme :global(.quick-action-chip) { background: #ffffff7a; border-color: #82879129; color: #454950; }
 
 .pawTheme :global(.quick-action-body) {
     overflow-y: auto;
@@ -59,14 +79,14 @@
 .pawTheme :global(.quick-action-tabs) button[data-active="true"],
 .pawTheme :global(.quick-action-option)[data-selected="true"],
 .pawTheme :global(.quick-action-chip)[data-selected="true"] {
-    background: var(--paw-green);
-    border-color: #bacebf;
-    color: #355443;
+    background: #dadee5a3;
+    border-color: #787d873d;
+    color: #25282d;
 }
 
 .pawTheme :global(.quick-action-section-heading),
 .pawTheme :global(.quick-action-clear-btn) {
-    color: var(--paw-purple);
+    color: #686c73;
 }
 
 .detail { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
