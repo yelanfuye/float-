@@ -86,11 +86,12 @@ function parseSseEvents(buffer: string): { events: string[]; rest: string } {
 function qaStreamIdleMs(): number {
     try {
         const raw = Number(localStorage.getItem("ai_phone_qa_stream_idle_ms"));
-        if (Number.isFinite(raw) && raw >= 1_000 && raw <= 600_000) return Math.floor(raw);
+        if (Number.isFinite(raw) && raw >= 1_000 && raw <= 3_600_000) return Math.floor(raw);
     } catch {
         // ignore
     }
-    return 90_000;
+    // 默认放宽到 30 分钟，彻底防止思考模型（DeepSeek R1/o1/Gemini Thinking）与慢中转被误判超时
+    return 1_800_000;
 }
 
 async function streamQaProviderRequest(
@@ -99,7 +100,7 @@ async function streamQaProviderRequest(
     callbacks?: QaStreamCallbacks,
 ): Promise<{ content: string; reasoning: string }> {
     const llmAbort = new AbortController();
-    const llmTimeout = setTimeout(() => llmAbort.abort(), 500_000);
+    const llmTimeout = setTimeout(() => llmAbort.abort(), 1_800_000);
     const abortHandler = () => llmAbort.abort();
     if (options?.signal) {
         if (options.signal.aborted) llmAbort.abort();
@@ -558,7 +559,7 @@ export async function compactQaContext(entries: QaContextEntry[], options?: { si
     const result = await requestQaCompletion(apiConfig, [
         {
             role: "system",
-            content: "你是对话上下文压缩器。把下面这段人机协作对话（含工具调用与结果）压缩成延续工作所需的中文备忘录，保留：用户的目标与偏好、已完成的操作与关键结论、涉及的文件/内容名称与关键参数、未完成事项与下一步计划。直接输出备忘录正文，不要评论。",
+            content: "你是对话上下文压缩器。把下面这段人机协作对话（含工具调用与结果）压缩成延续工作所需的中文备忘录。务必保留：1. 用户的核心目标与偏好；2. 已完成的操作与仓库/源码改动清单；3. 关键文件路径与参数；4. 未完成事项与下一步计划。直接输出结构化备忘录正文，不要多余寒暄与评论。",
         },
         { role: "user", content: transcript },
     ], { signal: options?.signal });

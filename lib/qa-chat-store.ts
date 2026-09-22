@@ -535,6 +535,80 @@ export function editAndResendQaMessage(
     return { ok: true };
 }
 
+/** 扫描会话历史提取最后一版完整的 JS 插件代码，确保跨会话结转无损 */
+function extractLatestPluginCode(messages: QaMsg[]): string | null {
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        if (msg.role === "assistant" && msg.content) {
+            const matches = Array.from(msg.content.matchAll(/```(?:javascript|js)\n([\s\S]*?)```/g));
+            if (matches.length > 0) {
+                const code = matches[matches.length - 1][1].trim();
+                if (code.includes("window.__WORKSHOP_RUNTIME__") || code.includes("xf-qa-capsule") || code.includes("workshop-outline") || code.length > 200) {
+                    return code;
+                }
+            }
+        }
+    }
+    return null;
+}
+
+/** 将当前会话的记忆浓缩并结转到新会话，重置 Token 空间 */
+export async function carryOverQaSession(sessionId: string): Promise<string | null> {
+    const session = sessions.find((s) => s.id === sessionId);
+    if (!session || isGenerating || isCompacting) return null;
+    const entries = sessionContext(session);
+    if (entries.length === 0) return null;
+
+    isCompacting = true;
+    emit();
+    try {
+        const summary = await compactQaContext(entries);
+        if (!summary) throw new Error("无法提取有效摘要");
+
+        let finalSummary = summary;
+        const latestPlugin = extractLatestPluginCode(session.messages);
+        if (latestPlugin && !finalSummary.includes(latestPlugin.slice(0, 50))) {
+            finalSummary += `\n\n### 上一会话最后一版已落地的完整 JS 插件源码\n\`\`\`javascript\n${latestPlugin}\n\`\`\``;
+        }
+
+        const newId = makeId();
+        const newSession: QaSession = {
+            id: newId,
+            title: `${session.title} (接续)`,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            messages: [
+                {
+                    id: makeId(),
+                    role: "assistant",
+                    content: `已承接会话「${session.title}」的关键记忆与进展！\n\n**前情备忘**：\n${finalSummary}\n\n新窗口上下文已清空，Token 空间充足，我们可以继续下一步！`,
+                    ts: Date.now(),
+                },
+            ],
+            context: [
+                {
+                    role: "user",
+                    content: `[上一会话「${session.title}」的结转摘要备忘，供你延续上下文]\n${finalSummary}`,
+                },
+                {
+                    role: "assistant",
+                    content: `已承接上一会话「${session.title}」的全部关键记忆与进展。新会话上下文已重置清空，我们可以继续下一步！`,
+                },
+            ],
+        };
+
+        sessions = [newSession, ...sessions].slice(0, MAX_SESSIONS);
+        activeSessionId = newSession.id;
+        publish();
+        return newId;
+    } catch {
+        return null;
+    } finally {
+        isCompacting = false;
+        emit();
+    }
+}
+
 function updateSession(sessionId: string, updater: (session: QaSession) => QaSession, options?: { persist?: boolean }) {
     sessions = sessions
         .map((s) => (s.id === sessionId ? updater(s) : s))

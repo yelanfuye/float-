@@ -76,6 +76,70 @@
   box-shadow: 10px 0 40px rgba(40, 34, 20, 0.22);   /* 交接处（右侧）阴影 */
   overflow: hidden;
 }
+
+/* ── 记忆结转进度 ── */
+.qa-global-carrying-bar {
+  position: absolute;
+  top: calc(var(--qa-header-safe-top, 0px) + 48px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: calc(100% - 24px);
+  width: max-content;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  -webkit-backdrop-filter: blur(20px) saturate(1.8);
+  backdrop-filter: blur(20px) saturate(1.8);
+  border: 1px solid rgba(115, 89, 230, 0.3);
+  box-shadow: 0 4px 16px rgba(115, 89, 230, 0.18), inset 0 1px 1px #fff;
+  color: #583ec7;
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  animation: qa-carrying-slide-down 0.22s ease-out;
+  pointer-events: none;
+}
+.qa-global-carrying-progress {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(115, 89, 230, 0.08), rgba(115, 89, 230, 0.28), rgba(115, 89, 230, 0.08));
+  background-size: 200% 100%;
+  animation: qa-carrying-shimmer 1.2s infinite linear;
+}
+.qa-global-carrying-bar > span,
+.qa-global-carrying-bar > svg { position: relative; }
+.qa-drawer-item.is-carrying {
+  overflow: hidden;
+  background: rgba(115, 89, 230, 0.08);
+}
+.qa-drawer-item-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2.5px;
+  background: linear-gradient(90deg, rgba(115, 89, 230, 0.2), #7359e6, rgba(115, 89, 230, 0.2));
+  background-size: 200% 100%;
+  animation: qa-carrying-shimmer 1.2s infinite linear;
+}
+@keyframes qa-carrying-slide-down {
+  from { opacity: 0; transform: translate(-50%, -8px) scale(0.95); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+@keyframes qa-carrying-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: 0 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .qa-global-carrying-bar,
+  .qa-global-carrying-progress,
+  .qa-drawer-item-progress { animation: none; }
+}
+
 /* 右移后盖在内容上的透明层，点按收起抽屉 */
 .qa-stage-scrim {
   position: absolute;
