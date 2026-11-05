@@ -10,6 +10,8 @@ import { isKnownStickerLabel } from "@/lib/sticker-data";
 import { translateReasoningText } from "@/lib/reasoning-translate";
 import { MessageBubble, MediaDetailModal, prewarmStickerCache, BilingualTextBlock, isStandaloneHtmlPreviewContent, normalizeTextBubbleContent } from "./message-bubble";
 import { GeneratedImageErrorDialog } from "./generated-image-error-dialog";
+import { GenerationErrorPanel, StreamRecoveryPanel } from "./stream-recovery-panel";
+import { redactStreamError } from "@/lib/stream-recovery";
 import { PhotoInputModal, TextPhotoModal, VoiceRecordModal, RedPacketModal, LocationInputModal, SystemInstructionModal } from "./rich-input-modals";
 import { EmojiPanel, StickerPanel } from "./emoji-panel";
 import { StickerSearchSuggest } from "./sticker-search-suggest";
@@ -1116,6 +1118,11 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     const chatToastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
     // 自动生图失败：弹一次弹窗提示，关掉即消失（同一轮里多张失败只提示第一条）
     const [imageGenerationFailure, setImageGenerationFailure] = useState<string | null>(null);
+    const [offlineGenerationError, setOfflineGenerationError] = useState<{ sessionId: string; message: string } | null>(null);
+    const reportOfflineError = (message: string) => setOfflineGenerationError(previous => ({
+        sessionId: session.id,
+        message: previous?.sessionId === session.id ? `${previous.message}\n\n—— 后续提示 ——\n${message}` : message,
+    }));
     const [cloudDeletePending, setCloudDeletePending] = useState<{ count: number } | null>(null);
     const [showPlusMenu, setShowPlusMenu] = useState(false);
     const [customPlusActions, setCustomPlusActions] = useState<RegisteredCustomAppChatPlusAction[]>(() => loadCustomAppChatPlusActions());
@@ -3315,6 +3322,11 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             setMessages(prev => [...prev, errorMsg]);
         } finally {
             if (finishGenerationRun(session.id, generationRunId)) {
+                // 失败草稿已由请求层独立保存；清理预览，避免下一轮混入旧增量。
+                if (streamParseFrameRef.current) cancelAnimationFrame(streamParseFrameRef.current);
+                streamParseFrameRef.current = 0;
+                streamAccumRef.current = "";
+                setStreamPreview(null);
                 isGeneratingRef.current = false;
                 setIsGenerating(false);
                 clearGenerationLock(session.id);
@@ -3859,6 +3871,11 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             setMessages(prev => [...prev, errorMsg]);
         } finally {
             if (finishGenerationRun(session.id, generationRunId)) {
+                // 失败草稿已由请求层独立保存；清理预览，避免下一轮混入旧增量。
+                if (streamParseFrameRef.current) cancelAnimationFrame(streamParseFrameRef.current);
+                streamParseFrameRef.current = 0;
+                streamAccumRef.current = "";
+                setStreamPreview(null);
                 isGeneratingRef.current = false;
                 setIsGenerating(false);
                 clearGenerationLock(session.id);
@@ -4188,7 +4205,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 if (!isCurrentOfflineRun()) return;
                 const assistantContent = result.content.trim() || result.rawText.trim();
                 if (!assistantContent) throw new Error("AI 没有返回线下正文");
-                if (!result.summary.trim()) showChatToast(`未提取到 <${result.summaryTag}> 摘要`);
+                if (!result.summary.trim()) reportOfflineError(`正文已生成，但未取得 <${result.summaryTag}> 摘要。\n正文将保留；若发生补提失败，详情可在调用日志查看。`);
                 const saved = appendChatOfflineTurn({
                     sessionId: session.id,
                     userContent: currentText,
@@ -4204,7 +4221,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             } catch (error: any) {
                 if (!isCurrentOfflineRun() || isAbortLikeError(error)) return;
                 offlineTextInputRef.current?.setText(currentText);
-                showChatToast(`线下生成失败: ${error?.message || String(error)}`, 3000);
+                reportOfflineError(`线下生成失败\n${redactStreamError(error)}\n\n本轮未作为完整回复保存。若已解析到正文，可在聊天底部的未完成草稿中查看。`);
             } finally {
                 if (!finishOfflineGenerationRun(session.id, offlineRunId)) return;
                 setPendingOfflineUserText("");
@@ -4338,7 +4355,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             if (!isCurrentOfflineRun()) return;
             const assistantContent = result.content.trim() || result.rawText.trim();
             if (!assistantContent) throw new Error("AI 没有返回线下正文");
-            if (!result.summary.trim()) showChatToast(`未提取到 <${result.summaryTag}> 摘要`);
+            if (!result.summary.trim()) reportOfflineError(`正文已生成，但未取得 <${result.summaryTag}> 摘要。\n正文将保留；若发生补提失败，详情可在调用日志查看。`);
             const saved = appendChatOfflineTurn({
                 sessionId: session.id,
                 userContent: retryInput,
@@ -4354,7 +4371,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         } catch (error: any) {
             if (!isCurrentOfflineRun() || isAbortLikeError(error)) return;
             offlineTextInputRef.current?.setText(retryInput);
-            showChatToast(`线下重试失败: ${error?.message || String(error)}`, 3000);
+            reportOfflineError(`线下重试失败\n${redactStreamError(error)}\n\n若已解析到正文，可在聊天底部的未完成草稿中查看。`);
         } finally {
             if (!finishOfflineGenerationRun(session.id, offlineRunId)) return;
             setPendingOfflineUserText("");
@@ -6173,6 +6190,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         ) : null}
                     </div>
                 )}
+                <StreamRecoveryPanel sessionId={session.id} offline={offlineMode} />
                 {/* Scroll anchor: browser keeps this in view when content above changes height */}
                 <div style={{ overflowAnchor: 'auto', height: 1 }} />
             </div>
@@ -6711,6 +6729,10 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     message={imageGenerationFailure}
                     onClose={() => setImageGenerationFailure(null)}
                 />
+            )}
+
+            {offlineGenerationError?.sessionId === session.id && (
+                <GenerationErrorPanel message={offlineGenerationError.message} onClose={() => setOfflineGenerationError(null)} />
             )}
 
             {/* Chat toast notification (overlay, does not affect layout) */}

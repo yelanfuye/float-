@@ -81,6 +81,8 @@ import { parseOfflineResponse, extractThinkingTag, type ParsedOfflineResponse } 
 import { buildProviderRequest, nativeToolProtocolForConfig, toLlmRequestMessages, type LlmRequestMessage, type LlmToolCall } from "./llm-provider-adapter";
 import type { DebugPromptSnapshot } from "./debug-store";
 import { throwIfAborted } from "./abort-utils";
+import { pushApiLog } from "./api-log-store";
+import { redactStreamError } from "./stream-recovery";
 import { buildCharacterTimeContext, buildGroupTimeContext } from "./character-time";
 import { getPromptTimestampOptionsForTimeContext } from "./prompt-time";
 
@@ -1208,7 +1210,14 @@ export async function generateGroupOfflineChatCompletion(
         ];
         throwIfAborted(options?.signal);
         // 补提请求不带 onReasoning：避免用补提请求的思维链覆盖主请求已累积的完整思维链
-        const retryRaw = stripPresetTexts(await sendLLMRequest(config, preset, retryMessages, regexes, meta, { ...requestOptions, onReasoning: undefined }), preset);
+        let retryRaw: string;
+        try {
+            retryRaw = stripPresetTexts(await sendLLMRequest(config, preset, retryMessages, regexes, meta, { ...requestOptions, onReasoning: undefined }), preset);
+        } catch (error) {
+            throwIfAborted(options?.signal);
+            pushApiLog({ characterName: meta.characterName, model: config.defaultModel, source: "chat", channel: "chat", messages: [], rawResponse: JSON.stringify({ kind: "offline_summary_failure", sessionId: session.id, error: redactStreamError(error, config.apiKey), bodyPreserved: true }) });
+            break;
+        }
         const retried = parseOfflineResponse(retryRaw, summaryTag);
         if (retried.summary.trim()) {
             parsed = { ...parsed, summary: retried.summary.trim() };

@@ -1,6 +1,7 @@
 // lib/chat-engine.ts
 
 import { createSseJsonParser } from "./sse-json";
+import { createStreamTrace, redactStreamError, type StreamTrace } from "./stream-recovery";
 import { maybeAppendShortcutCapability } from "./offline-shortcut-capability";
 import { loadCharacters } from "./character-storage";
 import { buildScreenEffectPromptHint } from "./chat-screen-effects";
@@ -719,6 +720,7 @@ async function readSseStream(
     providerKind: ChatCompletionStreamResult["providerKind"],
     callbacks?: ChatCompletionStreamCallbacks,
     stripTimestamps = true,
+    trace?: StreamTrace,
 ): Promise<{ content: string; rawResponse: string }> {
     if (!response.body) throw new ChatEngineError("流式响应没有 body。");
     const reader = response.body.getReader();
@@ -736,7 +738,10 @@ async function readSseStream(
     // 容错解析：中转把长 JSON 行切开时做碎片重组，不再静默丢增量（见 sse-json.ts）
     const sseParser = createSseJsonParser();
     const handleParsed = async (parsed: unknown) => {
+        trace?.stage("parse");
         const parts = parseProviderStreamDelta(providerKind, parsed);
+        trace?.parsed(parts.content, parts.reasoning);
+        trace?.stage("callback");
         if (parts.reasoning) {
             await callbacks?.onReasoningDelta?.(parts.reasoning);
         }
@@ -757,8 +762,11 @@ async function readSseStream(
     };
 
     while (true) {
+        trace?.stage("read");
         const { done, value } = await reader.read();
         if (done) break;
+        trace?.chunk(value);
+        trace?.stage("parse");
         buffer += decoder.decode(value, { stream: true });
         const parsed = parseSseEvents(buffer);
         buffer = parsed.rest;
@@ -814,15 +822,21 @@ export async function sendLLMStreamRequest(
     const requestMessages = toLlmRequestMessages(afterPlugins.messages);
     const request = buildProviderRequest(config, effectivePreset, requestMessages, { stream: true });
     publishDebugPromptSnapshot({ request, config, preset: effectivePreset, meta, options, requestKind: "completion" });
+    const trace = createStreamTrace({
+        sessionId: options?.debugSessionId, offline: options?.appTags?.includes("offline"),
+        appId: options?.appId, model: config.defaultModel, provider: request.providerKind,
+        apiKey: config.apiKey, characterName: meta?.characterName,
+    });
     const llmAbort = new AbortController();
     const llmTimeout = setTimeout(() => llmAbort.abort(), 1_800_000);
     const detachExternalAbort = attachExternalAbort(llmAbort, options?.signal);
 
     try {
         const response = await fetchLlmPayload(request, { signal: llmAbort.signal });
+        trace.response(response);
+        trace.stage("response");
         if (!response.ok) {
-            const errorText = await response.text();
-            throw new ChatEngineError(`API Stream Error ${response.status}: ${errorText}`);
+            throw new ChatEngineError(`API Stream Error ${response.status}`);
         }
         // 流式路径收集思维链原文：readSseStream 只通过 onReasoningDelta 回调透传，
         // 不额外包一层的话日志里就只有清洗后的回复正文，思维链被吞。
@@ -835,10 +849,12 @@ export async function sendLLMStreamRequest(
                 await (pluginCallbacks ?? callbacks)?.onReasoningDelta?.(text);
             },
         };
-        const { content: streamedContent, rawResponse } = await readSseStream(response, request.providerKind, streamLogCallbacks, !options?.skipTimestampStrip);
+        const { content: streamedContent, rawResponse } = await readSseStream(response, request.providerKind, streamLogCallbacks, !options?.skipTimestampStrip, trace);
+        trace.stage("validate");
         if (!streamedContent.trim()) {
             throw new ChatEngineError("流式响应没有解析到文本增量。");
         }
+        trace.stage("postprocess");
         let rawOutput = options?.skipTimestampStrip ? streamedContent.trim() : stripHallucinatedTimestamps(streamedContent.trim());
         rawOutput = await applyChatPluginLlmResponse(rawOutput, pluginPurpose, options?.debugSessionId);
 
@@ -867,13 +883,12 @@ export async function sendLLMStreamRequest(
         }
         return { content: rawOutput, rawResponse, providerKind: request.providerKind };
     } catch (error: unknown) {
-        if (error instanceof DOMException && (error as DOMException).name === "AbortError") {
-            if (options?.signal?.aborted) throw error;
-            throw new ChatEngineError("AI 流式回复超时（500秒），请重试。");
-        }
+        clearTimeout(llmTimeout);
+        await trace.fail(error, options?.signal?.aborted ? "cancelled" : llmAbort.signal.aborted ? "timeout" : "error");
+        if (options?.signal?.aborted) throw error;
+        if (llmAbort.signal.aborted) throw new ChatEngineError("AI 流式回复超时（30分钟）；请查看未完成草稿及调用日志。");
         if (error instanceof ChatEngineError) throw error;
-        const detail = error instanceof Error ? error.message : String(error);
-        throw new ChatEngineError(`Stream Network Error connecting to AI Provider: ${detail}`);
+        throw new ChatEngineError(`流式接收或处理失败：${redactStreamError(error, config.apiKey)}。诊断已记录到调用日志。`);
     } finally {
         clearTimeout(llmTimeout);
         detachExternalAbort();
@@ -1112,13 +1127,19 @@ export async function sendLLMToolStreamRequest(
     const contentStripper = createStreamingTimestampStripper();
     const toolDrafts = new Map<number, StreamToolCallDraft>();
     const firedToolCallStarts = new Set<number>();
+    const trace = createStreamTrace({
+        sessionId: options?.debugSessionId, offline: options?.appTags?.includes("offline"),
+        appId: options?.appId, model: config.defaultModel, provider: request.providerKind,
+        apiKey: config.apiKey, characterName: meta?.characterName,
+    });
 
     try {
         const response = await fetchLlmPayload(request, { signal: llmAbort.signal });
 
+        trace.response(response);
+        trace.stage("response");
         if (!response.ok) {
-            const errorText = await response.text();
-            throw new ChatEngineError(`API Tool Stream Error ${response.status}: ${errorText}`);
+            throw new ChatEngineError(`API Tool Stream Error ${response.status}`);
         }
         if (!response.body) throw new ChatEngineError("原生动作流式响应没有 body。");
 
@@ -1130,7 +1151,10 @@ export async function sendLLMToolStreamRequest(
         const sseParser = createSseJsonParser();
         const handleParsedDelta = async (data: unknown) => {
             {
+                    trace.stage("parse");
                     const delta = parseProviderStreamDelta(request.providerKind, data);
+                    trace.parsed(delta.content, delta.reasoning);
+                    trace.stage("callback");
                     if (delta.reasoning) {
                         reasoning += delta.reasoning;
                         await callbacks?.onReasoningDelta?.(delta.reasoning);
@@ -1164,8 +1188,11 @@ export async function sendLLMToolStreamRequest(
             }
         };
         while (true) {
+            trace.stage("read");
             const { value, done } = await reader.read();
             if (done) break;
+            trace.chunk(value);
+            trace.stage("parse");
             buffer += decoder.decode(value, { stream: true });
             const parsed = parseSseEvents(buffer);
             buffer = parsed.rest;
@@ -1191,6 +1218,7 @@ export async function sendLLMToolStreamRequest(
             content += finalContent;
             await callbacks?.onDelta?.(finalContent);
         }
+        trace.stage("postprocess");
         content = await applyChatPluginLlmResponse(content, pluginPurpose, options?.debugSessionId);
 
         const sanitizedMessages = request.messagesForLog.map(m => ({
@@ -1208,6 +1236,7 @@ export async function sendLLMToolStreamRequest(
             reasoning: reasoning || undefined,
         });
 
+        trace.stage("validate");
         if (!content && toolCalls.length === 0 && truncatedNames.length === 0) {
             throw new ChatEngineError("原生动作流式响应没有解析到文本或动作。");
         }
@@ -1222,13 +1251,12 @@ export async function sendLLMToolStreamRequest(
             providerKind: request.providerKind,
         };
     } catch (error: unknown) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-            if (options?.signal?.aborted) throw error;
-            throw new ChatEngineError("AI 原生动作流式回复超时（500秒），请重试。");
-        }
+        clearTimeout(llmTimeout);
+        await trace.fail(error, options?.signal?.aborted ? "cancelled" : llmAbort.signal.aborted ? "timeout" : "error");
+        if (options?.signal?.aborted) throw error;
+        if (llmAbort.signal.aborted) throw new ChatEngineError("AI 原生动作流式回复超时（30分钟）；请查看未完成草稿及调用日志。");
         if (error instanceof ChatEngineError) throw error;
-        const detail = error instanceof Error ? error.message : String(error);
-        throw new ChatEngineError(`Tool Stream Network Error connecting to AI Provider: ${detail}`);
+        throw new ChatEngineError(`流式接收或处理失败：${redactStreamError(error, config.apiKey)}。诊断已记录到调用日志。`);
     } finally {
         clearTimeout(llmTimeout);
         detachExternalAbort();
@@ -2076,7 +2104,15 @@ export async function generateOfflineChatCompletion(
         ];
         throwIfAborted(options?.signal);
         // 补提请求不带 onReasoning：避免用补提请求的思维链覆盖主请求已累积的完整思维链
-        const retryRaw = stripPresetTexts(await sendLLMRequest(config, preset, retryMessages, regexes, meta, { ...requestOptions, onReasoning: undefined }), preset);
+        let retryRaw: string;
+        try {
+            retryRaw = stripPresetTexts(await sendLLMRequest(config, preset, retryMessages, regexes, meta, { ...requestOptions, onReasoning: undefined }), preset);
+        } catch (error) {
+            throwIfAborted(options?.signal);
+            // 正文已成功：补摘要失败不能让整轮正文丢失。
+            pushApiLog({ characterName: meta.characterName, model: config.defaultModel, source: "chat", channel: "chat", messages: [], rawResponse: JSON.stringify({ kind: "offline_summary_failure", sessionId: session.id, error: redactStreamError(error, config.apiKey), bodyPreserved: true }) });
+            break;
+        }
         const retried = parseOfflineResponse(retryRaw, summaryTag);
         if (retried.summary.trim()) {
             parsed = { ...parsed, summary: retried.summary.trim() };
