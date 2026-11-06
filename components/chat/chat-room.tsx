@@ -5545,6 +5545,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                                     </div>
                                     <div className="chat-offline-label-row">
                                         <div className="chat-offline-label">{session.isGroup ? (session.groupName || "群聊") : (character?.name || "对方")}</div>
+                                        {turn.recoveredFromDraftId && <span className="menu-desc">手动恢复</span>}
                                         {assistantHasHtmlPreview ? (
                                             <button
                                                 type="button"
@@ -6190,7 +6191,15 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         ) : null}
                     </div>
                 )}
-                <StreamRecoveryPanel sessionId={session.id} offline={offlineMode} />
+                <StreamRecoveryPanel key={session.id} sessionId={session.id} offline={offlineMode}
+                    busy={isOfflineGenerating || isGenerating}
+                    summaryTag={streamPreviewTagConfig.summaryTag}
+                    thinkingTags={streamPreviewTagConfig.offlineThinking}
+                    onRestored={() => {
+                        setOfflineTurns(loadChatOfflineTurns(session.id));
+                        setOfflineVisibleCount(count => Math.max(count, OFFLINE_INITIAL_LOAD));
+                        showChatToast("已恢复到线下记录末尾；输入框内容未自动清除，请避免重复发送");
+                    }} />
                 {/* Scroll anchor: browser keeps this in view when content above changes height */}
                 <div style={{ overflowAnchor: 'auto', height: 1 }} />
             </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { OfflineDraftRestore } from "./offline-draft-restore";
 import { STREAM_RECOVERY_EVENT, loadStreamRecoveryDrafts, removeStreamRecoveryDraft, type StreamRecoveryDraft } from "@/lib/stream-recovery";
 
 function CopyButton({ text, label }: { text: string; label: string }) {
@@ -31,7 +32,10 @@ export function GenerationErrorPanel({ message, onClose }: { message: string; on
     </section>;
 }
 
-export function StreamRecoveryPanel({ sessionId, offline }: { sessionId: string; offline: boolean }) {
+export function StreamRecoveryPanel({ sessionId, offline, busy = false, summaryTag, thinkingTags, onRestored }: {
+    sessionId: string; offline: boolean; busy?: boolean;
+    summaryTag?: string; thinkingTags?: string[]; onRestored?: () => void;
+}) {
     const [drafts, setDrafts] = useState<StreamRecoveryDraft[]>([]);
     useEffect(() => {
         const refresh = () => setDrafts(loadStreamRecoveryDrafts(sessionId));
@@ -43,7 +47,7 @@ export function StreamRecoveryPanel({ sessionId, offline }: { sessionId: string;
     if (!visible.length) return null;
     return <section aria-label="未完成草稿" style={{ padding: 14, border: "1px solid #dfb6ac", borderRadius: 14, margin: "12px 0", color: "var(--c-text)", userSelect: "text" }}>
         <strong>未完成草稿 · {visible.length}</strong>
-        <p style={{ fontSize: 12, opacity: .7 }}>仅供查看和复制，不进入角色记忆，不执行动作。删除前请先复制需要的内容。</p>
+        <p style={{ fontSize: 12, opacity: .7 }}>草稿本身不进入角色记忆，不执行动作。线下草稿可经你核对后恢复为正式记录；删除前请先复制需要的内容。</p>
         {visible.map(draft => <details key={draft.id} style={{ marginTop: 12 }}>
             <summary>{new Date(draft.createdAt).toLocaleString()} · {draft.text.length} 字符{draft.persisted ? " · 已保存" : " · 未写入磁盘，请立即复制"}</summary>
             <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 260, overflowY: "auto", fontFamily: "inherit", fontSize: 13 }}>{draft.text}</pre>
@@ -54,6 +58,7 @@ export function StreamRecoveryPanel({ sessionId, offline }: { sessionId: string;
                     if (window.confirm("仅删除这份未完成草稿？此操作不能撤销。")) removeStreamRecoveryDraft(draft.id);
                 }}>删除草稿</button>
             </div>
+            {offline && onRestored && <OfflineDraftRestore draft={draft} busy={busy} summaryTag={summaryTag} thinkingTags={thinkingTags} onRestored={onRestored} />}
             <details style={{ marginTop: 8 }}><summary>诊断详情</summary><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 12 }}>{draft.diagnostic}</pre></details>
         </details>)}
     </section>;

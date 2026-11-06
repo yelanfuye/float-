@@ -1,6 +1,6 @@
 import { loadChatSessions } from "./chat-storage";
 import { formatChatTimestamp } from "./llm-prompt-assembler";
-import { kvGet, kvRemove, kvSet, registerDynamicPrefix } from "./kv-db";
+import { kvGet, kvRemove, kvSet, kvSetAsync, isKvHydrated, registerDynamicPrefix } from "./kv-db";
 
 const CHAT_OFFLINE_TURNS_PREFIX = "ai_phone_chat_offline_turns:";
 registerDynamicPrefix(CHAT_OFFLINE_TURNS_PREFIX);
@@ -13,6 +13,7 @@ export type ChatOfflineTurn = {
     summary: string;
     summaryTag: string;
     rawText?: string;
+    recoveredFromDraftId?: string; // 用户手动确认恢复，非请求正常完成
     reasoningText?: string; // 模型思维链（reasoning/CoT）内容
     thinkingText?: string; // 预设格式 <thinking> 标签解析出的思维链（展示优先于 reasoningText）
     thinkingTag?: string; // 实际用于提取思维链的标签名（preset.thinking_tag 或默认 thinking）
@@ -58,6 +59,7 @@ function normalizeTurn(value: unknown): ChatOfflineTurn | null {
         summary: typeof item.summary === "string" ? item.summary : "",
         summaryTag: typeof item.summaryTag === "string" && item.summaryTag.trim() ? item.summaryTag.trim() : "summary",
         rawText: typeof item.rawText === "string" ? item.rawText : undefined,
+        recoveredFromDraftId: typeof item.recoveredFromDraftId === "string" ? item.recoveredFromDraftId : undefined,
         reasoningText: typeof item.reasoningText === "string" ? item.reasoningText : undefined,
         thinkingText: typeof item.thinkingText === "string" ? item.thinkingText : undefined,
         thinkingTag: typeof item.thinkingTag === "string" ? item.thinkingTag : undefined,
@@ -117,6 +119,37 @@ export function appendChatOfflineTurn(input: {
     };
     saveChatOfflineTurns(input.sessionId, [...loadChatOfflineTurns(input.sessionId), turn]);
     return turn;
+}
+
+const recoveryWrites = new Map<string, Promise<ChatOfflineTurn>>();
+
+/** 显式确认后追加恢复记录；保留来源标记，不执行原文中的工具或动作。 */
+export async function restoreOfflineDraft(input: {
+    sessionId: string; draftId: string; userContent: string;
+    assistantContent: string; summary: string; summaryTag: string;
+    rawText: string;
+}): Promise<ChatOfflineTurn> {
+    if (!isKvHydrated()) throw new Error("本地记录尚未加载，请稍后重试");
+    if (!input.assistantContent.trim()) throw new Error("恢复正文不能为空");
+    const pending = recoveryWrites.get(input.sessionId);
+    if (pending) { await pending; return restoreOfflineDraft(input); }
+    const task = (async () => {
+        const turns = loadChatOfflineTurns(input.sessionId);
+        const existing = turns.find(turn => turn.recoveredFromDraftId === input.draftId);
+        const turn: ChatOfflineTurn = existing ?? {
+            id: createTurnId(), sessionId: input.sessionId,
+            userContent: input.userContent.trim(), assistantContent: input.assistantContent.trim(),
+            summary: input.summary.trim(), summaryTag: input.summaryTag.trim() || "summary",
+            rawText: input.rawText, recoveredFromDraftId: input.draftId,
+            createdAt: new Date().toISOString(),
+        };
+        // 重试时也确认写入磁盘，避免缓存已更新但上次磁盘写入失败。
+        await kvSetAsync(storageKey(input.sessionId), JSON.stringify(existing ? turns : [...turns, turn]));
+        return turn;
+    })();
+    recoveryWrites.set(input.sessionId, task);
+    try { return await task; }
+    finally { if (recoveryWrites.get(input.sessionId) === task) recoveryWrites.delete(input.sessionId); }
 }
 
 export function updateChatOfflineTurn(
