@@ -11,6 +11,8 @@ export type StreamRecoveryDraft = {
     offline: boolean;
     createdAt: string;
     text: string;
+    /** 对应本次线下请求的用户输入；缺省表示旧草稿未留存，空字符串表示本轮确实无输入。 */
+    userContent?: string;
     diagnostic: string;
     persisted: boolean;
 };
@@ -47,6 +49,8 @@ export function redactStreamError(error: unknown, secret = ""): string {
 export function createStreamTrace(meta: {
     sessionId?: string; offline?: boolean; appId?: string;
     model: string; provider: string; apiKey: string; characterName?: string;
+    /** 仅供本地线下草稿恢复，不写入诊断日志。 */
+    userContent?: string;
 }) {
     const startedAt = Date.now();
     const id = `${startedAt}-${Math.random().toString(36).slice(2, 10)}`;
@@ -105,6 +109,9 @@ export function createStreamTrace(meta: {
             const draft: StreamRecoveryDraft = {
                 id, sessionId: meta.sessionId, offline: meta.offline === true,
                 createdAt: new Date(now).toISOString(), text, diagnostic, persisted: false,
+                // 原始输入只随本地线下草稿保存；线上请求不额外留存，诊断仍不含输入。
+                ...(meta.offline === true && typeof meta.userContent === "string"
+                    ? { userContent: meta.userContent } : {}),
             };
             volatileDrafts.set(id, draft);
             try {

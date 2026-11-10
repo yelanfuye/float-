@@ -17,7 +17,9 @@ export function OfflineDraftRestore({ draft, busy, summaryTag = "summary", think
     const [body, setBody] = useState("");
     const [summary, setSummary] = useState("");
     const [tag, setTag] = useState(summaryTag);
-    const [userText, setUserText] = useState("");
+    // 仅使用该草稿关联的原始输入；不从当前输入框或最近一条历史猜测，避免恢复错轮。
+    // 正文/摘要重新提取时不重置此状态，保留用户在恢复表单中的修改。
+    const [userText, setUserText] = useState(() => typeof draft.userContent === "string" ? draft.userContent : "");
     const [confirmed, setConfirmed] = useState(false);
     const [saving, setSaving] = useState(false);
     const savingRef = useRef(false);
@@ -46,9 +48,14 @@ export function OfflineDraftRestore({ draft, busy, summaryTag = "summary", think
                 <input className="ui-input" value={tag} disabled={saving} onChange={e => setTag(e.target.value)} />
             </label>
             <button type="button" className="ui-btn ui-btn-ghost" disabled={saving} onClick={prepare}>按此标签重新提取（覆盖下方正文和摘要）</button>
-            <label style={{ display: "block" }}>本轮用户输入（旧草稿未留存，请补填；无输入时可留空）
+            <label style={{ display: "block" }}>本轮用户输入（可编辑）
                 <textarea className="ui-textarea" style={{ width: "100%", minHeight: 70 }} value={userText} disabled={saving} onChange={e => { setUserText(e.target.value); setConfirmed(false); }} />
             </label>
+            <p style={{ fontSize: 12, opacity: .7 }}>
+                {typeof draft.userContent === "string"
+                    ? (draft.userContent ? "已自动带入这份草稿对应的原始输入，请核对；也可直接修改。" : "已记录本轮没有用户输入，可保持留空。")
+                    : "这份旧草稿未留存对应输入，请补填；若本轮确实没有输入，可留空。"}
+            </p>
             <label style={{ display: "block" }}>正文
                 <textarea className="ui-textarea" style={{ width: "100%", minHeight: 180 }} value={body} disabled={saving} onChange={e => { setBody(e.target.value); setConfirmed(false); }} />
             </label>

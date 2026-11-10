@@ -799,6 +799,8 @@ export async function sendLLMStreamRequest(
         skipOutputRegex?: boolean;
         /** 不剥幻觉时间戳：流式增量原样直出（不扣尾巴），落库文本与流出的一字不差 */
         skipTimestampStrip?: boolean;
+        /** 本轮线下原始输入的快照，仅用于本地中断草稿；不加入 API 请求或诊断日志。 */
+        recoveryUserContent?: string;
         includeReasoning?: boolean;
         appId?: string;
         appTags?: string[];
@@ -826,6 +828,7 @@ export async function sendLLMStreamRequest(
         sessionId: options?.debugSessionId, offline: options?.appTags?.includes("offline"),
         appId: options?.appId, model: config.defaultModel, provider: request.providerKind,
         apiKey: config.apiKey, characterName: meta?.characterName,
+        userContent: options?.recoveryUserContent,
     });
     const llmAbort = new AbortController();
     const llmTimeout = setTimeout(() => llmAbort.abort(), 1_800_000);
@@ -2030,7 +2033,7 @@ export type OfflineChatCompletionResult = ParsedOfflineResponse & {
 export async function generateOfflineChatCompletion(
     session: ChatSession,
     history: ChatMessage[],
-    options?: { signal?: AbortSignal; onStreamDelta?: (delta: string) => void },
+    options?: { signal?: AbortSignal; onStreamDelta?: (delta: string) => void; userContent?: string },
 ): Promise<OfflineChatCompletionResult> {
     const { llmMessages, character, config, preset, regexes, userIdentity } = await buildChatPromptMessages(
         session,
@@ -2060,6 +2063,7 @@ export async function generateOfflineChatCompletion(
             appTags: ["chat", "offline"],
             debugSessionId: session.id,
             signal: options?.signal,
+            recoveryUserContent: options?.userContent,
         }, {
             onDelta: (text) => options.onStreamDelta?.(text),
             onReasoningDelta: (t) => { reasoning += t; },

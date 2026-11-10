@@ -1136,7 +1136,7 @@ export type GroupOfflineChatCompletionResult = ParsedOfflineResponse & {
 export async function generateGroupOfflineChatCompletion(
     session: ChatSession,
     history: ChatMessage[],
-    options?: { signal?: AbortSignal; onStreamDelta?: (delta: string) => void },
+    options?: { signal?: AbortSignal; onStreamDelta?: (delta: string) => void; userContent?: string },
 ): Promise<GroupOfflineChatCompletionResult> {
     const { llmMessages, config, preset, regexes } = await buildGroupChatPromptMessages(
         session,
@@ -1166,6 +1166,7 @@ export async function generateGroupOfflineChatCompletion(
             appTags: ["group_chat", "offline"],
             debugSessionId: session.id,
             signal: options?.signal,
+            recoveryUserContent: options?.userContent,
         }, {
             onDelta: (text) => options.onStreamDelta?.(text),
             onReasoningDelta: (t) => { reasoning += t; },
