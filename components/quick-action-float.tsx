@@ -29,7 +29,7 @@ import type { Character } from "@/lib/character-types";
 
 type QuickScope = "global" | "character";
 type FloatingPosition = { left: number; top: number };
-type PopoverPosition = { left: number; top: number };
+type PopoverPosition = { left: number; top: number; maxHeight: number };
 type FloatingDragState = {
     pointerId: number;
     startClientX: number;
@@ -214,26 +214,47 @@ export function QuickActionFloat() {
             setPopoverPosition(null);
             return;
         }
-        const rect = layer.getBoundingClientRect();
-        const buttonRect = button.getBoundingClientRect();
-        const posAnchor = (draggingFloatingButton && floatingPosition)
-            ? floatingPosition
-            : (floatingDockEnabled && dockState.anchorPosition)
-                ? dockState.anchorPosition
-                : (floatingPosition ?? {
-                    left: buttonRect.left - rect.left,
-                    top: buttonRect.top - rect.top,
-                });
-        const width = Math.min(344, rect.width - 32);
-        const statusSafeTop = getStatusSafeTop(layer);
-        const estimatedHeight = Math.min(520, Math.max(240, rect.height - statusSafeTop - 12));
-        const left = posAnchor.left - width - 8;
-        const top = posAnchor.top - estimatedHeight - 8;
-        const maxTop = Math.max(statusSafeTop, rect.height - estimatedHeight - 12);
-        setPopoverPosition({
-            left: Math.min(Math.max(12, left), Math.max(12, rect.width - width - 12)),
-            top: Math.min(Math.max(statusSafeTop, top), maxTop),
-        });
+        const viewport = window.visualViewport;
+        const apply = () => {
+            const rect = layer.getBoundingClientRect();
+            // 定位样式使用容器内布局像素，不能直接使用手机外壳缩放后的屏幕像素。
+            const layerWidth = layer.clientWidth;
+            const layerHeight = layer.clientHeight;
+            if (!layerWidth || !layerHeight || !rect.height) return;
+            const scaleY = rect.height / layerHeight;
+            const viewportTop = viewport?.offsetTop ?? 0;
+            const viewportBottom = viewportTop + (viewport?.height ?? window.innerHeight);
+            const visibleTop = Math.min(layerHeight, Math.max(0, (viewportTop - rect.top) / scaleY));
+            const visibleBottom = Math.min(layerHeight, Math.max(visibleTop, (viewportBottom - rect.top) / scaleY));
+            // 对应截图橙线：下方留出约 15% 可见屏高，只限制展开窗口，不移动猫爪。
+            const bottomLimit = visibleTop + (visibleBottom - visibleTop) * 0.85;
+            const statusSafeTop = Math.min(bottomLimit, Math.max(getStatusSafeTop(layer), visibleTop + 12));
+            const posAnchor = (draggingFloatingButton && floatingPosition)
+                ? floatingPosition
+                : (floatingDockEnabled && dockState.anchorPosition)
+                    ? dockState.anchorPosition
+                    : (floatingPosition ?? { left: button.offsetLeft, top: button.offsetTop });
+            const width = Math.min(344, Math.max(0, layerWidth - 32));
+            const estimatedHeight = Math.min(520, Math.max(0, bottomLimit - statusSafeTop));
+            const left = Math.min(Math.max(12, posAnchor.left - width - 8), Math.max(12, layerWidth - width - 12));
+            const top = Math.min(Math.max(statusSafeTop, posAnchor.top - estimatedHeight - 8), Math.max(statusSafeTop, bottomLimit - estimatedHeight));
+            // 必须同时约束实际高度，否则长配置列表会越过估算高度再次撑到屏幕底部。
+            const maxHeight = Math.max(0, bottomLimit - top);
+            setPopoverPosition(previous => previous?.left === left && previous.top === top && previous.maxHeight === maxHeight
+                ? previous : { left, top, maxHeight });
+        };
+        apply();
+        const observer = new ResizeObserver(apply);
+        observer.observe(layer);
+        window.addEventListener("resize", apply);
+        viewport?.addEventListener("resize", apply);
+        viewport?.addEventListener("scroll", apply);
+        return () => {
+            observer.disconnect();
+            window.removeEventListener("resize", apply);
+            viewport?.removeEventListener("resize", apply);
+            viewport?.removeEventListener("scroll", apply);
+        };
     }, [open, floatingPosition, dockState.anchorPosition, draggingFloatingButton, floatingDockEnabled]);
 
     const currentSlot: BindingSlot = useMemo(() => {
@@ -456,7 +477,7 @@ export function QuickActionFloat() {
             ? `继承全局：${inheritedWorldBookNames.join("、")}`
             : "继承全局";
     const popoverStyle: CSSProperties | undefined = popoverPosition
-        ? { left: popoverPosition.left, top: popoverPosition.top }
+        ? { left: popoverPosition.left, top: popoverPosition.top, maxHeight: popoverPosition.maxHeight }
         : undefined;
 
     const isDual = floatingDockEnabled && promptViewerEnabled && enabled;
