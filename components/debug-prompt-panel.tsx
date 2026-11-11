@@ -271,7 +271,8 @@ export function DebugPromptPanel() {
                 ? detail.promptViewerEnabled
                 : settings.promptViewerEnabled === true;
             setEnabled(nextEnabled);
-            setQuickActionEnabled(typeof detail?.quickActionEnabled === "boolean" ? detail.quickActionEnabled : settings.quickActionEnabled === true);
+            // 快捷入口已独立为分组菜单，不再参与提示词查看器的双球排列。
+            setQuickActionEnabled(false);
             setFloatingDockEnabled(typeof detail?.floatingDockEnabled === "boolean" ? detail.floatingDockEnabled : settings.floatingDockEnabled === true);
             if (!nextEnabled) setCollapsed(true);
         };

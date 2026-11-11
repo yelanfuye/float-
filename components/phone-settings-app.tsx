@@ -504,7 +504,7 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                                     </span>
                                     <span className="settings-tools-menu-copy">
                                         <span className="menu-label appearance-menu-item-label">快捷操作</span>
-                                        <span className="menu-desc settings-tools-menu-desc">快速切换 API 与世界书</span>
+                                        <span className="menu-desc settings-tools-menu-desc">常态贴边，展开 API、小卷、世界书与调用记录</span>
                                     </span>
                                     <span className="menu-right settings-tools-menu-toggle">
                                         <Toggle checked={quickActionEnabled} onChange={handleQuickActionChange} className="settings-toggle-control" />
@@ -532,7 +532,8 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                                                     <SlidersHorizontal size={20} strokeWidth={1.8} />
                                                 </span>
                                                 <span className="settings-tools-menu-copy">
-                                                    <span className="menu-label appearance-menu-item-label">贴边半透明收拢模式</span>
+                                                    <span className="menu-label appearance-menu-item-label">提示词查看器贴边收拢</span>
+                                                    <span className="menu-desc settings-tools-menu-desc">快捷操作始终贴边，不受此开关影响</span>
                                                 </span>
                                                 <span className="menu-right settings-tools-menu-toggle">
                                                     <Toggle checked={floatingDockEnabled} onChange={handleFloatingDockChange} className="settings-toggle-control" />

@@ -76,7 +76,7 @@ import { getWeekStartIso } from "./calendar-utils";
 import { buildCharacterTimeContext } from "./character-time";
 import { getPromptTimestampOptionsForTimeContext } from "./prompt-time";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
-import { pushApiLog } from "./api-log-store";
+import { createApiCallMetrics, pushApiLog } from "./api-log-store";
 export { getApiLogs, clearApiLogs, type DebugInfo } from "./api-log-store";
 import { stripStateAndInnerForPrompt } from "./prompt-sanitizer";
 import { getInternalCapability, getInternalCapabilitySubToolDefinitions } from "./internal-capability-storage";
@@ -827,15 +827,17 @@ export async function sendLLMStreamRequest(
     const trace = createStreamTrace({
         sessionId: options?.debugSessionId, offline: options?.appTags?.includes("offline"),
         appId: options?.appId, model: config.defaultModel, provider: request.providerKind,
-        apiKey: config.apiKey, characterName: meta?.characterName,
+        apiKey: config.apiKey, characterName: meta?.characterName, apiConfigId: config.id,
         userContent: options?.recoveryUserContent,
     });
+    const metrics = createApiCallMetrics(config);
     const llmAbort = new AbortController();
     const llmTimeout = setTimeout(() => llmAbort.abort(), 1_800_000);
     const detachExternalAbort = attachExternalAbort(llmAbort, options?.signal);
 
     try {
         const response = await fetchLlmPayload(request, { signal: llmAbort.signal });
+        metrics.response(response);
         trace.response(response);
         trace.stage("response");
         if (!response.ok) {
@@ -868,6 +870,7 @@ export async function sendLLMStreamRequest(
             content: typeof m.content === "string" ? m.content : "[vision: 含图片的多模态消息]",
         }));
         pushApiLog({
+            ...metrics.result("success"),
             characterName: meta?.characterName,
             ...apiLogChannelFor(options),
             model: config.defaultModel,
@@ -951,12 +954,14 @@ export async function sendLLMRequest(
     console.log("[ChatEngine] Message roles:", request.messagesForLog.map((m, i) => `${i}:${m.role}`).join(" → "));
     console.log("[ChatEngine] Request:", requestDebugInfo);
 
+    const metrics = createApiCallMetrics(config);
     const llmAbort = new AbortController();
     const llmTimeout = setTimeout(() => llmAbort.abort(), 1_800_000);
     const detachExternalAbort = attachExternalAbort(llmAbort, options?.signal);
 
     try {
         const response = await fetchLlmPayload(request, { signal: llmAbort.signal });
+        metrics.response(response);
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -1000,6 +1005,7 @@ export async function sendLLMRequest(
             content: typeof m.content === "string" ? m.content : "[vision: 含图片的多模态消息]",
         }));
         pushApiLog({
+            ...metrics.result("success"),
             characterName: meta?.characterName,
             ...apiLogChannelFor(options),
             model: config.defaultModel,
@@ -1021,8 +1027,14 @@ export async function sendLLMRequest(
         });
         return applyOutputRegex(rawOutput, regexes, { macroEngine, activeTags });
     } catch (error: unknown) {
-        if (error instanceof DOMException && (error as DOMException).name === "AbortError") {
-            throw new ChatEngineError("AI 回复超时（500秒），请重试。");
+        pushApiLog({
+            ...metrics.result(options?.signal?.aborted ? "cancelled" : "error"),
+            ...apiLogChannelFor(options), characterName: meta?.characterName, model: config.defaultModel,
+            messages: [], rawResponse: `[请求失败] ${redactStreamError(error, config.apiKey)}`,
+        });
+        if (options?.signal?.aborted) throw error;
+        if (llmAbort.signal.aborted) {
+            throw new ChatEngineError("AI 回复超时（30分钟），请重试并查看调用记录。");
         }
         if (error instanceof ChatEngineError) throw error;
         const detail = error instanceof Error ? error.message : String(error);
@@ -1121,6 +1133,7 @@ export async function sendLLMToolStreamRequest(
     const effectivePreset = afterPlugins.preset;
     const request = buildProviderRequest(config, effectivePreset, afterPlugins.messages, { tools, stream: true, maxTokens: options?.maxTokens });
     publishDebugPromptSnapshot({ request, config, preset: effectivePreset, meta, options, requestKind: "native-tools-stream", tools });
+    const metrics = createApiCallMetrics(config);
     const llmAbort = new AbortController();
     const llmTimeout = setTimeout(() => llmAbort.abort(), 1_800_000);
     const detachExternalAbort = attachExternalAbort(llmAbort, options?.signal);
@@ -1133,11 +1146,12 @@ export async function sendLLMToolStreamRequest(
     const trace = createStreamTrace({
         sessionId: options?.debugSessionId, offline: options?.appTags?.includes("offline"),
         appId: options?.appId, model: config.defaultModel, provider: request.providerKind,
-        apiKey: config.apiKey, characterName: meta?.characterName,
+        apiKey: config.apiKey, characterName: meta?.characterName, apiConfigId: config.id,
     });
 
     try {
         const response = await fetchLlmPayload(request, { signal: llmAbort.signal });
+        metrics.response(response);
 
         trace.response(response);
         trace.stage("response");
@@ -1229,8 +1243,13 @@ export async function sendLLMToolStreamRequest(
             content: typeof m.content === "string" ? m.content : "[vision: 含图片的多模态消息]",
         }));
         const { calls: toolCalls, truncatedNames } = finalizeStreamToolCalls(toolDrafts);
-        const logEntryRaw = JSON.stringify({ content, reasoning, toolCalls, raw: rawResponse });
+        trace.stage("validate");
+        if (!content && toolCalls.length === 0 && truncatedNames.length === 0) {
+            throw new ChatEngineError("原生动作流式响应没有解析到文本或动作。");
+        }
+        const logEntryRaw = JSON.stringify({ content, reasoning, toolCalls, truncatedToolCalls: truncatedNames, raw: rawResponse });
         pushApiLog({
+            ...metrics.result(truncatedNames.length ? "error" : "success"),
             characterName: meta?.characterName,
             ...apiLogChannelFor(options),
             model: config.defaultModel,
@@ -1238,11 +1257,6 @@ export async function sendLLMToolStreamRequest(
             rawResponse: logEntryRaw,
             reasoning: reasoning || undefined,
         });
-
-        trace.stage("validate");
-        if (!content && toolCalls.length === 0 && truncatedNames.length === 0) {
-            throw new ChatEngineError("原生动作流式响应没有解析到文本或动作。");
-        }
 
         return {
             content,
@@ -1288,12 +1302,14 @@ export async function sendLLMToolRequest(
     const effectivePreset = afterPlugins.preset;
     const request = buildProviderRequest(config, effectivePreset, afterPlugins.messages, { tools });
     publishDebugPromptSnapshot({ request, config, preset: effectivePreset, meta, options, requestKind: "native-tools", tools });
+    const metrics = createApiCallMetrics(config);
     const llmAbort = new AbortController();
     const llmTimeout = setTimeout(() => llmAbort.abort(), 1_800_000);
     const detachExternalAbort = attachExternalAbort(llmAbort, options?.signal);
 
     try {
         const response = await fetchLlmPayload(request, { signal: llmAbort.signal });
+        metrics.response(response);
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -1333,6 +1349,7 @@ export async function sendLLMToolRequest(
             raw: parsed.raw,
         });
         pushApiLog({
+            ...metrics.result("success"),
             characterName: meta?.characterName,
             ...apiLogChannelFor(options),
             model: config.defaultModel,
@@ -1360,9 +1377,14 @@ export async function sendLLMToolRequest(
             usage: parsed.usage,
         };
     } catch (error: unknown) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-            if (options?.signal?.aborted) throw error;
-            throw new ChatEngineError("AI 原生动作回复超时（500秒），请重试。");
+        pushApiLog({
+            ...metrics.result(options?.signal?.aborted ? "cancelled" : "error"),
+            ...apiLogChannelFor(options), characterName: meta?.characterName, model: config.defaultModel,
+            messages: [], rawResponse: `[请求失败] ${redactStreamError(error, config.apiKey)}`,
+        });
+        if (options?.signal?.aborted) throw error;
+        if (llmAbort.signal.aborted) {
+            throw new ChatEngineError("AI 原生动作回复超时（30分钟），请查看调用记录。");
         }
         if (error instanceof ChatEngineError) throw error;
         const detail = error instanceof Error ? error.message : String(error);

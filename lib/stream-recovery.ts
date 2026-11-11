@@ -48,7 +48,7 @@ export function redactStreamError(error: unknown, secret = ""): string {
 
 export function createStreamTrace(meta: {
     sessionId?: string; offline?: boolean; appId?: string;
-    model: string; provider: string; apiKey: string; characterName?: string;
+    model: string; provider: string; apiKey: string; characterName?: string; apiConfigId?: string;
     /** 仅供本地线下草稿恢复，不写入诊断日志。 */
     userContent?: string;
 }) {
@@ -101,6 +101,8 @@ export function createStreamTrace(meta: {
             // No headers, URL, prompt, raw SSE or tool arguments are written to diagnostics.
             pushApiLog({
                 characterName: meta.characterName, model: meta.model,
+                status: reason === "cancelled" ? "cancelled" : "error",
+                provider: meta.provider, apiConfigId: meta.apiConfigId, httpStatus: status, durationMs: Math.max(0, now - startedAt),
                 source: meta.appId === "qa" ? "qa" : "chat",
                 channel: meta.appId === "qa" ? "qa" : "chat",
                 messages: [], rawResponse: diagnostic,

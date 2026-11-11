@@ -5,6 +5,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import {
   getMascotState,
   isMascotPanelOpen,
+  isMascotQuickMenuMode,
   getMascotWidgetRect,
   subscribeMascot,
   MASCOT_TRANSITION_MS,
@@ -491,6 +492,7 @@ function NineSliceCalibrationDialog({
 export function MascotFloat() {
   const state = useSyncExternalStore(subscribeMascot, getMascotState, () => "widget" as const);
   const panelOpen = useSyncExternalStore(subscribeMascot, isMascotPanelOpen, () => false);
+  const quickMenuMode = useSyncExternalStore(subscribeMascot, isMascotQuickMenuMode, () => false);
   const widgetRect = useSyncExternalStore(subscribeMascot, getMascotWidgetRect, () => null);
   const context = useSyncExternalStore(subscribeMascotContext, getMascotContext, () => getMascotContext());
 
@@ -2151,7 +2153,7 @@ export function MascotFloat() {
           <div
             ref={floatRef}
             className="mascot-float"
-            style={floatPos ? { left: floatPos.left, top: floatPos.top, right: "auto", bottom: "auto" } : undefined}
+            style={quickMenuMode ? { display: "none" } : floatPos ? { left: floatPos.left, top: floatPos.top, right: "auto", bottom: "auto" } : undefined}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
@@ -2164,17 +2166,19 @@ export function MascotFloat() {
           {/* Panel */}
           {panelOpen && (() => {
             const el = floatRef.current;
-            const shell = el?.closest("[data-ui='phone-screen']") as HTMLElement | null;
+            const shell = (el?.closest("[data-ui='phone-screen']") ?? document.querySelector("[data-ui='phone-screen']")) as HTMLElement | null;
             const shellRect = shell?.getBoundingClientRect();
             const ballRect = el?.getBoundingClientRect();
-            const shellW = shellRect?.width ?? 390;
-            const shellH = shellRect?.height ?? 844;
-            const ballLeft = (ballRect?.left ?? 0) - (shellRect?.left ?? 0);
-            const ballTop = (ballRect?.top ?? 0) - (shellRect?.top ?? 0);
+            const shellW = shell?.clientWidth || 390;
+            const shellH = shell?.clientHeight || 844;
+            const scaleX = shellRect?.width ? shellRect.width / shellW : 1;
+            const scaleY = shellRect?.height ? shellRect.height / shellH : 1;
+            const ballLeft = ((ballRect?.left ?? 0) - (shellRect?.left ?? 0)) / scaleX;
+            const ballTop = ((ballRect?.top ?? 0) - (shellRect?.top ?? 0)) / scaleY;
             const panelW = Math.min(280, shellW * 0.75);
             const onRight = ballLeft > shellW / 2;
-            const pLeft = onRight ? Math.max(8, ballLeft + 56 - panelW) : Math.min(ballLeft, shellW - panelW - 8);
-            const pBottom = shellH - ballTop + 8;
+            const pLeft = quickMenuMode ? Math.max(8, (shellW - panelW) / 2) : onRight ? Math.max(8, ballLeft + 56 - panelW) : Math.max(8, Math.min(ballLeft, shellW - panelW - 8));
+            const pBottom = quickMenuMode ? Math.max(16, shellH * 0.15) : shellH - ballTop + 8;
             const moduleDrawer = (
               <div className="mascot-module-drawer" data-open={moduleDrawerOpen ? "true" : undefined}>
                 <button
@@ -2230,7 +2234,7 @@ export function MascotFloat() {
             return (
             <div
               className="mascot-panel"
-              style={{ left: pLeft, bottom: pBottom }}
+              style={{ left: pLeft, bottom: pBottom, ...(quickMenuMode ? { width: panelW, maxHeight: Math.max(0, shellH - pBottom - 80), overflowY: "auto", boxSizing: "border-box" as const } : {}) }}
               onPointerDown={() => {
                 if (activeMascotMessageIndex !== null) closeMascotMessageMenu();
               }}

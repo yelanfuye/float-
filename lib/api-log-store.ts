@@ -19,7 +19,37 @@ export type DebugInfo = {
     source?: "chat" | "background" | "qa";
     /** 归属通道：qa 进工坊专用环，其余进底层调用日志环。分流只认这个显式字段，不看角色名 */
     channel?: "chat" | "qa";
+    /** 显式调用结果；旧记录缺省，不据正文推断成功。 */
+    status?: "success" | "error" | "cancelled";
+    apiConfigId?: string;
+    provider?: string;
+    durationMs?: number;
+    httpStatus?: number;
 };
+
+/** 只采集调用元数据，不保留 URL、请求头或密钥。 */
+export function createApiCallMetrics(config: { id?: string; provider: string }) {
+    const startedAt = Date.now();
+    let httpStatus: number | undefined;
+    return {
+        response(value: { status: number }) { httpStatus = value.status; },
+        result(status: NonNullable<DebugInfo["status"]>) {
+            return { apiConfigId: config.id, provider: config.provider, status, durationMs: Math.max(0, Date.now() - startedAt), httpStatus };
+        },
+    };
+}
+
+export function redactApiLogText(value: unknown, secret = ""): string {
+    let text = value instanceof Error ? value.message : String(value);
+    if (secret) text = text.split(secret).join("[已隐藏]");
+    return text.replace(/Bearer\s+[^\s,;"']+/gi, "Bearer [已隐藏]")
+        .replace(/((?:api[_-]?key|x-api-key|authorization|access_token|token)["']?\s*[:=]\s*["']?)[^\s,;&"']+/gi, "$1[已隐藏]");
+}
+
+export const API_LOGS_UPDATED_EVENT = "phone-api-logs-updated";
+function notifyApiLogsUpdated(): void {
+    if (typeof window !== "undefined") window.dispatchEvent(new Event(API_LOGS_UPDATED_EVENT));
+}
 
 // 底层调用日志环容量。原为 50：聊天请求与 18 处 simpleLLMCall 后台调用（记忆总结、
 // NPC 生成、剧情、地图等）共享一个环，用户想看自己刚才那次聊天时很容易已被后台调用
@@ -126,11 +156,11 @@ function trimLogsForStorage(logs: DebugInfo[], maxCount: number, maxSerializedCh
 }
 
 export function getApiLogs(): DebugInfo[] { return _loadLogs(API_LOGS_KEY); }
-export function clearApiLogs(): void { try { kvRemove(API_LOGS_KEY); } catch { } }
+export function clearApiLogs(): void { try { kvRemove(API_LOGS_KEY); notifyApiLogsUpdated(); } catch { } }
 
 /** 工坊专用调用记录（仅工坊 UI 读取，与底层日志完全隔离）。 */
 export function getQaApiLogs(): DebugInfo[] { return _loadLogs(QA_LOGS_KEY); }
-export function clearQaApiLogs(): void { try { kvRemove(QA_LOGS_KEY); } catch { } }
+export function clearQaApiLogs(): void { try { kvRemove(QA_LOGS_KEY); notifyApiLogsUpdated(); } catch { } }
 
 /** 追加一条调用日志（id/timestamp 自动生成、超限文本截断），超出数量/体积上限时裁掉最旧的记录。 */
 export function pushApiLog(entry: Omit<DebugInfo, "id" | "timestamp">): void {
@@ -148,5 +178,6 @@ export function pushApiLog(entry: Omit<DebugInfo, "id" | "timestamp">): void {
             timestamp: new Date().toISOString(),
         });
         _saveLogs(key, trimLogsForStorage(logs, maxCount, maxSerializedChars));
+        notifyApiLogsUpdated();
     } catch { /* 日志写入失败不影响主流程 */ }
 }

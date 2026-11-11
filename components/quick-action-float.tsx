@@ -1,19 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type CSSProperties } from "react";
-import { BookOpen, Check, ChevronDown, Code2, UserRound, X } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type CSSProperties } from "react";
+import { Activity, ArrowLeft, BookOpen, Check, ChevronDown, ChevronRight, Code2, Sparkles, UserRound, X } from "lucide-react";
 import { QuickApiPanel } from "./quick-api-panel";
+import { ApiCallMonitor } from "./api-call-monitor";
 import styles from "./quick-action-paw.module.css";
 import { CHAT_APP_SETTINGS_UPDATED_EVENT, loadChatAppSettings } from "@/lib/chat-storage";
-import {
-    getFloatingDockState,
-    subscribeFloatingDockState,
-    expandFloatingDock,
-    collapseFloatingDock,
-    setFloatingDockAnchor,
-    setActiveFloatingTool,
-    clampFloatingDockAnchor,
-} from "@/lib/floating-dock-store";
+import { closeMascotPanel, openMascotPanel } from "@/lib/mascot-state";
+import { mascotNavigate } from "@/lib/mascot-events";
 import {
     getCharacterBinding,
     loadApiConfigs,
@@ -89,9 +83,8 @@ export function QuickActionFloat() {
     const [floatingPosition, setFloatingPosition] = useState<FloatingPosition | null>(null);
     const [popoverPosition, setPopoverPosition] = useState<PopoverPosition | null>(null);
     const [draggingFloatingButton, setDraggingFloatingButton] = useState(false);
-    const [floatingDockEnabled, setFloatingDockEnabled] = useState(false);
-    const [promptViewerEnabled, setPromptViewerEnabled] = useState(false);
-    const dockState = useSyncExternalStore(subscribeFloatingDockState, getFloatingDockState, getFloatingDockState);
+    const [dockSide, setDockSide] = useState<"left" | "right">("right");
+    const [page, setPage] = useState<"menu" | "api" | "worldbook" | "logs">("menu");
     const layerRef = useRef<HTMLDivElement | null>(null);
     const floatingButtonRef = useRef<HTMLButtonElement | null>(null);
     const floatingDragRef = useRef<FloatingDragState | null>(null);
@@ -99,10 +92,9 @@ export function QuickActionFloat() {
 
     const handleClose = useCallback(() => {
         setOpen(false);
-        if (floatingDockEnabled) {
-            collapseFloatingDock();
-        }
-    }, [floatingDockEnabled]);
+        setEditingApi(null);
+        setPage("menu");
+    }, []);
 
     const reloadData = useCallback(() => {
         const nextCharacters = loadCharacters();
@@ -124,9 +116,7 @@ export function QuickActionFloat() {
                 ? detail.quickActionEnabled
                 : settings.quickActionEnabled === true;
             setEnabled(nextEnabled);
-            setPromptViewerEnabled(typeof detail?.promptViewerEnabled === "boolean" ? detail.promptViewerEnabled : settings.promptViewerEnabled === true);
-            // 猫爪独立自由悬停，不参与双球贴边停靠。
-            setFloatingDockEnabled(false);
+            // 快捷入口始终贴边，独立于提示词查看器的双球偏好。
             if (!nextEnabled) setOpen(false);
         };
         syncEnabled();
@@ -158,54 +148,40 @@ export function QuickActionFloat() {
         return () => document.removeEventListener("pointerdown", handlePointerDown);
     }, [open, handleClose]);
 
-    useEffect(() => {
-        if (!floatingDockEnabled || !dockState.isExpanded || open) return;
-        const handleOutside = (e: PointerEvent) => {
-            const target = e.target as HTMLElement | null;
-            if (!target?.closest(".prompt-viewer-float-button")) {
-                collapseFloatingDock();
-            }
-        };
-        const timer = setTimeout(() => {
-            document.addEventListener("pointerdown", handleOutside);
-        }, 60);
-        return () => {
-            clearTimeout(timer);
-            document.removeEventListener("pointerdown", handleOutside);
-        };
-    }, [floatingDockEnabled, dockState.isExpanded, open]);
-
-    // 自由悬停的位置在旋屏或容器缩小时仍保持在可见范围。
+    // 使用布局坐标，避免外壳缩放时拖动和吸边发生偏移；仅保存边和高度比例。
     useLayoutEffect(() => {
         if (!enabled) return;
         const layer = layerRef.current;
         if (!layer) return;
         const apply = () => {
-            const rect = layer.getBoundingClientRect();
-            setFloatingPosition(previous => previous ? {
-                left: clampFloatingPosition(previous.left, Math.max(12, rect.width - (floatingButtonRef.current?.offsetWidth || 44) - 12)),
-                top: clampFloatingPosition(previous.top, Math.max(12, rect.height - (floatingButtonRef.current?.offsetHeight || 44) - 12)),
-            } : null);
+            if (floatingDragRef.current?.moved) return;
+            let side: "left" | "right" = "right";
+            let ratio = 0.62;
+            try {
+                const saved = JSON.parse(localStorage.getItem("phone_quick_edge_anchor_v1") || "null");
+                if (saved?.side === "left" || saved?.side === "right") side = saved.side;
+                if (typeof saved?.ratio === "number" && Number.isFinite(saved.ratio)) ratio = Math.max(0, Math.min(1, saved.ratio));
+            } catch { /* 默认靠右 */ }
+            const size = floatingButtonRef.current?.offsetWidth || 44;
+            setDockSide(side);
+            setFloatingPosition({
+                left: side === "left" ? 0 : Math.max(0, layer.clientWidth - size),
+                top: clampFloatingPosition(layer.clientHeight * ratio, Math.max(12, layer.clientHeight - size - 12)),
+            });
         };
+        apply();
         const observer = new ResizeObserver(apply);
         observer.observe(layer);
         window.addEventListener("resize", apply);
         return () => { observer.disconnect(); window.removeEventListener("resize", apply); };
     }, [enabled]);
 
-    // 贴边坐标是按像素持久化的，换了视口尺寸要先夹回屏幕内，否则球可能落在屏幕外碰不到
-    useLayoutEffect(() => {
-        if (!floatingDockEnabled) return;
-        const layer = layerRef.current;
-        if (!layer) return;
-        const apply = () => {
-            const rect = layer.getBoundingClientRect();
-            clampFloatingDockAnchor(rect.width, rect.height);
-        };
-        apply();
-        window.addEventListener("resize", apply);
-        return () => window.removeEventListener("resize", apply);
-    }, [floatingDockEnabled, enabled]);
+    useEffect(() => {
+        if (!open) return;
+        const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") handleClose(); };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    }, [open, handleClose]);
 
     useLayoutEffect(() => {
         const layer = layerRef.current;
@@ -229,14 +205,11 @@ export function QuickActionFloat() {
             // 对应截图橙线：下方留出约 15% 可见屏高，只限制展开窗口，不移动猫爪。
             const bottomLimit = visibleTop + (visibleBottom - visibleTop) * 0.85;
             const statusSafeTop = Math.min(bottomLimit, Math.max(getStatusSafeTop(layer), visibleTop + 12));
-            const posAnchor = (draggingFloatingButton && floatingPosition)
-                ? floatingPosition
-                : (floatingDockEnabled && dockState.anchorPosition)
-                    ? dockState.anchorPosition
-                    : (floatingPosition ?? { left: button.offsetLeft, top: button.offsetTop });
+            const posAnchor = floatingPosition ?? { left: button.offsetLeft, top: button.offsetTop };
             const width = Math.min(344, Math.max(0, layerWidth - 32));
-            const estimatedHeight = Math.min(520, Math.max(0, bottomLimit - statusSafeTop));
-            const left = Math.min(Math.max(12, posAnchor.left - width - 8), Math.max(12, layerWidth - width - 12));
+            const estimatedHeight = Math.min(page === "menu" ? 390 : 520, Math.max(0, bottomLimit - statusSafeTop));
+            const desiredLeft = dockSide === "left" ? posAnchor.left + 12 : posAnchor.left + button.offsetWidth - width - 12;
+            const left = Math.min(Math.max(12, desiredLeft), Math.max(12, layerWidth - width - 12));
             const top = Math.min(Math.max(statusSafeTop, posAnchor.top - estimatedHeight - 8), Math.max(statusSafeTop, bottomLimit - estimatedHeight));
             // 必须同时约束实际高度，否则长配置列表会越过估算高度再次撑到屏幕底部。
             const maxHeight = Math.max(0, bottomLimit - top);
@@ -255,7 +228,7 @@ export function QuickActionFloat() {
             viewport?.removeEventListener("resize", apply);
             viewport?.removeEventListener("scroll", apply);
         };
-    }, [open, floatingPosition, dockState.anchorPosition, draggingFloatingButton, floatingDockEnabled]);
+    }, [open, floatingPosition, page, dockSide]);
 
     const currentSlot: BindingSlot = useMemo(() => {
         if (scope === "global") return config.globalDefaults || {};
@@ -337,102 +310,66 @@ export function QuickActionFloat() {
         updateWorldBooks(next);
     }, [selectedWorldBookIds, updateWorldBooks]);
 
-    function getFloatingButtonBounds(button: HTMLButtonElement, currentPos: FloatingPosition | null) {
-        const parent = button.offsetParent instanceof HTMLElement ? button.offsetParent : null;
-        const parentRect = parent?.getBoundingClientRect() ?? {
-            left: 0,
-            top: 0,
-            width: window.innerWidth,
-            height: window.innerHeight,
-        };
-        // 始终使用未变换的纯净布局坐标：优先使用 state 中的位置，若初始未拖拽则取 offsetLeft / offsetTop（不受 CSS transform 影响）
-        const left = currentPos ? currentPos.left : button.offsetLeft;
-        const top = currentPos ? currentPos.top : button.offsetTop;
-        return {
-            left,
-            top,
-            maxLeft: Math.max(12, parentRect.width - button.offsetWidth - 12),
-            maxTop: Math.max(12, parentRect.height - button.offsetHeight - 12),
-            parentWidth: parentRect.width,
-            parentHeight: parentRect.height,
-        };
+    function dragDelta(event: ReactPointerEvent<HTMLButtonElement>, drag: FloatingDragState) {
+        const layer = layerRef.current;
+        const rect = layer?.getBoundingClientRect();
+        const scaleX = layer && rect?.width ? rect.width / layer.clientWidth : 1;
+        const scaleY = layer && rect?.height ? rect.height / layer.clientHeight : 1;
+        return { x: (event.clientX - drag.startClientX) / scaleX, y: (event.clientY - drag.startClientY) / scaleY };
     }
 
     function handleFloatingPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
-        const isDual = floatingDockEnabled && promptViewerEnabled && enabled;
-        const isQuickPrimary = !isDual || dockState.primaryTool === "quick-action";
-        if (floatingDockEnabled && (dockState.isExpanded || (isDual && !isQuickPrimary))) {
-            // 展开挑选模式、或并非当前停靠的主球时，不接受拖拽
-            return;
-        }
+        if (!event.isPrimary || event.button !== 0) return;
         event.stopPropagation();
+        suppressFloatingClickRef.current = false;
         const button = event.currentTarget;
-        const anchor = isDual ? dockState.anchorPosition : null;
-        const bounds = getFloatingButtonBounds(button, (isDual && anchor) ? anchor : floatingPosition);
+        const layer = layerRef.current;
         floatingDragRef.current = {
             pointerId: event.pointerId,
             startClientX: event.clientX,
             startClientY: event.clientY,
-            left: bounds.left,
-            top: bounds.top,
-            maxLeft: bounds.maxLeft,
-            maxTop: bounds.maxTop,
+            left: floatingPosition?.left ?? button.offsetLeft,
+            top: floatingPosition?.top ?? button.offsetTop,
+            maxLeft: Math.max(0, (layer?.clientWidth ?? window.innerWidth) - button.offsetWidth),
+            maxTop: Math.max(12, (layer?.clientHeight ?? window.innerHeight) - button.offsetHeight - 12),
             moved: false,
         };
-        // 不在 pointerDown 立即 setDraggingFloatingButton(true)，避免普通点击时瞬间取消 is-docked 产生动画抖动
         button.setPointerCapture(event.pointerId);
     }
 
     function handleFloatingPointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
         const drag = floatingDragRef.current;
         if (!drag || drag.pointerId !== event.pointerId) return;
-        event.stopPropagation();
-        const deltaX = event.clientX - drag.startClientX;
-        const deltaY = event.clientY - drag.startClientY;
-        if (!drag.moved) {
-            // 超过 3px 移动阈值才判定为拖拽，杜绝手指/鼠标微小震颤把贴边位移写入 floatingPosition
-            if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
-                drag.moved = true;
-                setDraggingFloatingButton(true);
-            } else {
-                return;
-            }
-        }
+        const delta = dragDelta(event, drag);
+        if (!drag.moved && Math.hypot(delta.x, delta.y) <= 4) return;
+        drag.moved = true;
+        setDraggingFloatingButton(true);
+        handleClose();
         setFloatingPosition({
-            left: clampFloatingPosition(drag.left + deltaX, drag.maxLeft),
-            top: clampFloatingPosition(drag.top + deltaY, drag.maxTop),
+            left: Math.max(0, Math.min(drag.maxLeft, drag.left + delta.x)),
+            top: clampFloatingPosition(drag.top + delta.y, drag.maxTop),
         });
     }
 
     function handleFloatingPointerEnd(event: ReactPointerEvent<HTMLButtonElement>) {
         const drag = floatingDragRef.current;
         if (!drag || drag.pointerId !== event.pointerId) return;
-        event.stopPropagation();
+        suppressFloatingClickRef.current = drag.moved || event.type === "pointercancel";
         if (drag.moved) {
-            suppressFloatingClickRef.current = true;
-            if (floatingDockEnabled) {
-                // Auto-snap to closest edge (left or right)
-                const bounds = getFloatingButtonBounds(event.currentTarget, floatingPosition);
-                const midX = bounds.parentWidth / 2;
-                const currentX = drag.left + (event.clientX - drag.startClientX);
-                const currentTop = drag.top + (event.clientY - drag.startClientY);
-                const isLeft = currentX < midX;
-                const snappedLeft = isLeft ? 18 : Math.max(18, bounds.parentWidth - event.currentTarget.offsetWidth - 18);
-                const snappedTop = clampFloatingPosition(currentTop, bounds.maxTop);
-                const newPos = { left: snappedLeft, top: snappedTop };
-                setFloatingPosition(newPos);
-                setFloatingDockAnchor({ ...newPos, dockSide: isLeft ? "left" : "right" });
-                if (!open) {
-                    collapseFloatingDock();
-                }
-            }
+            const delta = dragDelta(event, drag);
+            const layer = layerRef.current;
+            const width = layer?.clientWidth || window.innerWidth;
+            const side = drag.left + delta.x + event.currentTarget.offsetWidth / 2 < width / 2 ? "left" : "right";
+            const top = clampFloatingPosition(drag.top + delta.y, drag.maxTop);
+            setDockSide(side);
+            setFloatingPosition({ left: side === "left" ? 0 : Math.max(0, width - event.currentTarget.offsetWidth), top });
+            try {
+                localStorage.setItem("phone_quick_edge_anchor_v1", JSON.stringify({ side, ratio: top / (layer?.clientHeight || window.innerHeight) }));
+            } catch { /* 不影响本次吸边 */ }
         }
-
         floatingDragRef.current = null;
         setDraggingFloatingButton(false);
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-            event.currentTarget.releasePointerCapture(event.pointerId);
-        }
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     }
 
     function handleFloatingButtonClick(event: ReactMouseEvent<HTMLButtonElement>) {
@@ -441,25 +378,10 @@ export function QuickActionFloat() {
             suppressFloatingClickRef.current = false;
             return;
         }
-
-        // If already open, clicking it collapses back to dock
-        if (open) {
-            handleClose();
-            return;
-        }
-
-        if (floatingDockEnabled) {
-            const isDual = promptViewerEnabled && enabled;
-            const isQuickPrimary = !isDual || dockState.primaryTool === "quick-action";
-            // Dual-ball mode: if currently docked as primary and not expanded, clicking expands both balls!
-            if (isDual && isQuickPrimary && dockState.isDocked && !dockState.isExpanded) {
-                expandFloatingDock();
-                return;
-            }
-            setActiveFloatingTool("quick-action");
-        }
-
+        if (open) { handleClose(); return; }
+        closeMascotPanel();
         reloadData();
+        setPage("menu");
         setOpen(true);
     }
 
@@ -480,43 +402,11 @@ export function QuickActionFloat() {
         ? { left: popoverPosition.left, top: popoverPosition.top, maxHeight: popoverPosition.maxHeight }
         : undefined;
 
-    const isDual = floatingDockEnabled && promptViewerEnabled && enabled;
-    const isQuickPrimary = !isDual || dockState.primaryTool === "quick-action";
-    const isPromptViewerActive = floatingDockEnabled && promptViewerEnabled && dockState.activeTool === "prompt-viewer";
-
-    const isHiddenBehind = isDual && !isQuickPrimary && !open && !dockState.isExpanded;
-    const isDocked = floatingDockEnabled && !open && (
-        isQuickPrimary ? (dockState.isDocked && !draggingFloatingButton) : false
-    );
-    const isOpen = open;
-    const isExpanded = floatingDockEnabled && !open && dockState.isExpanded;
-    const isPaired = isDual && !isQuickPrimary && !open && dockState.isExpanded;
-    const dockSide = dockState.dockSide;
-    const anchor = isDual ? dockState.anchorPosition : null;
-
-    const buttonClass = [
-        "prompt-viewer-float-button",
-        "quick-action-float-button",
-        isHiddenBehind ? "is-hidden-behind" : "",
-        isDocked ? "is-docked" : "",
-        isOpen ? "is-open" : "",
-        isExpanded ? "is-expanded" : "",
-        isPaired ? "is-paired" : "",
-    ].filter(Boolean).join(" ");
-
-    let buttonStyle: CSSProperties | undefined;
-    if (draggingFloatingButton && floatingPosition) {
-        buttonStyle = { left: floatingPosition.left, top: floatingPosition.top };
-    } else if (isDual && anchor) {
-        buttonStyle = { left: anchor.left, top: anchor.top };
-    } else if (floatingPosition) {
-        buttonStyle = { left: floatingPosition.left, top: floatingPosition.top };
-    } else if (isDual) {
-        buttonStyle = { bottom: 148, right: 18 };
-    }
-    if (isPromptViewerActive) {
-        buttonStyle = { ...buttonStyle, display: "none" };
-    }
+    const buttonClass = `quick-action-float-button ${!open && !draggingFloatingButton ? styles.edgeIdle : ""}`;
+    const buttonStyle: CSSProperties = floatingPosition
+        ? { left: floatingPosition.left, top: floatingPosition.top, right: "auto", bottom: "auto" }
+        : { right: 0, top: "62%", bottom: "auto" };
+    const pageTitle = { menu: "快捷操作", api: "API 设置", worldbook: "世界书设置", logs: "API 调用记录" }[page];
 
     return (
         <div className={`quick-action-layer ${styles.pawTheme}`} ref={layerRef}>
@@ -524,10 +414,12 @@ export function QuickActionFloat() {
                 ref={floatingButtonRef}
                 type="button"
                 className={buttonClass}
-                aria-label="打开快捷操作"
-                data-positioned={(isDual ? !!anchor : !!floatingPosition) ? "" : undefined}
+                aria-label={open ? "关闭快捷操作" : "打开快捷操作"}
+                aria-expanded={open}
+                aria-controls="quick-action-panel"
+                data-positioned={floatingPosition ? "" : undefined}
                 data-dragging={draggingFloatingButton ? "" : undefined}
-                data-dock-side={floatingDockEnabled ? dockSide : undefined}
+                data-dock-side={dockSide}
                 onPointerDown={handleFloatingPointerDown}
                 onPointerMove={handleFloatingPointerMove}
                 onPointerUp={handleFloatingPointerEnd}
@@ -540,6 +432,7 @@ export function QuickActionFloat() {
 
             {open ? (
                 <div
+                    id="quick-action-panel"
                     className="quick-action-popover"
                     data-positioned={popoverPosition ? "" : undefined}
                     style={popoverStyle}
@@ -549,10 +442,10 @@ export function QuickActionFloat() {
                 >
                     <div className="quick-action-header">
                         <div className="quick-action-title">
-                            <span className="quick-action-title-icon"><CatPaw size={18} /></span>
+                            {page !== "menu" ? <button type="button" className="quick-action-icon-btn" aria-label="返回快捷菜单" onClick={() => { setEditingApi(null); setPage("menu"); }}><ArrowLeft size={18} /></button> : <span className="quick-action-title-icon"><CatPaw size={18} /></span>}
                             <div>
-                                <h3>快捷操作</h3>
-                                <p>{scope === "global" ? "全局默认" : selectedCharacter?.name || "角色默认"}</p>
+                                <h3>{pageTitle}</h3>
+                                <p>{page === "menu" ? "轻点选择 · 用完即收起" : page === "logs" ? "本机模型调用 · 非服务商后台" : scope === "global" ? "全局默认" : selectedCharacter?.name || "角色默认"}</p>
                             </div>
                         </div>
                         <button type="button" className="quick-action-icon-btn" onClick={handleClose} aria-label="关闭快捷操作">
@@ -561,13 +454,24 @@ export function QuickActionFloat() {
                     </div>
 
                     <div className="quick-action-body">
-                        {editingApi ? (
+                        {page === "menu" ? <>
+                            <div className={styles.menuGroup}>
+                                <button type="button" className={styles.menuRow} onClick={() => setPage("api")}><span className={styles.menuIcon} data-tone="blue"><Code2 size={18} /></span><span><b>API 设置</b><small>选择配置、切换模型与测试连接</small></span><ChevronRight size={16} /></button>
+                                <button type="button" className={styles.menuRow} onClick={() => { handleClose(); openMascotPanel(); }}><span className={styles.menuIcon} data-tone="purple"><Sparkles size={18} /></span><span><b>小卷悬浮窗</b><small>打开助手，保留现有对话</small></span><ChevronRight size={16} /></button>
+                                <button type="button" className={styles.menuRow} onClick={() => setPage("worldbook")}><span className={styles.menuIcon} data-tone="orange"><BookOpen size={18} /></span><span><b>世界书设置</b><small>按全局或角色选择绑定</small></span><ChevronRight size={16} /></button>
+                            </div>
+                            <div className={styles.menuGroup}>
+                                <button type="button" className={styles.menuRow} onClick={() => setPage("logs")}><span className={styles.menuIcon} data-tone="green"><Activity size={18} /></span><span><b>API 调用记录</b><small>查看调用结果、耗时与报错</small></span><ChevronRight size={16} /></button>
+                            </div>
+                            <p className={styles.note}>入口常态贴边半隐藏；拖动后自动吸附最近一侧。点击空白处或关闭按钮即可收起。</p>
+                        </> : page === "logs" ? <ApiCallMonitor /> : editingApi ? (
                             <QuickApiPanel
                                 key={editingApi.id}
                                 config={editingApi}
                                 scopeLabel={scope === "global" ? "全局默认" : `${selectedCharacter?.name || "角色"}的默认配置`}
                                 onBack={() => { setEditingApi(null); reloadData(); }}
                                 onConfirm={confirmApiModel}
+                                onLogs={() => { setEditingApi(null); setPage("logs"); }}
                             />
                         ) : <>
                         <div className="quick-action-tabs" role="tablist" aria-label="绑定范围">
@@ -607,6 +511,11 @@ export function QuickActionFloat() {
                             </label>
                         ) : null}
 
+                        {page === "api" ? <>
+                        <div className={styles.actions}>
+                            <button type="button" onClick={() => setPage("logs")}><Activity size={15} />查看调用记录</button>
+                            <button type="button" onClick={() => { handleClose(); mascotNavigate("settings", "api"); }}>完整 API 设置<ChevronRight size={15} /></button>
+                        </div>
                         <section className="quick-action-section" data-disabled={characterDisabled ? "" : undefined}>
                             <div className="quick-action-section-heading">
                                 <span><Code2 size={16} />API</span>
@@ -640,7 +549,8 @@ export function QuickActionFloat() {
                                 ))}
                             </div>
                         </section>
-
+                        </> : <>
+                        <button type="button" className={styles.back} onClick={() => { handleClose(); mascotNavigate("settings", "worldbook"); }}>打开完整世界书设置<ChevronRight size={15} /></button>
                         <section className="quick-action-section" data-disabled={characterDisabled ? "" : undefined}>
                             <div className="quick-action-section-heading">
                                 <span><BookOpen size={16} />世界书</span>
@@ -686,6 +596,7 @@ export function QuickActionFloat() {
                                 </div>
                             )}
                         </section>
+                        </>}
                         </>}
                     </div>
                 </div>

@@ -3,7 +3,7 @@
 // request headers, and response parsing. All LLM-calling modules should use these.
 
 import type { ApiConfig } from "./settings-types";
-import { pushApiLog } from "./api-log-store";
+import { createApiCallMetrics, pushApiLog, redactApiLogText } from "./api-log-store";
 
 const SIMPLE_ANTHROPIC_AUTO_MAX_TOKENS = 8192;
 
@@ -100,8 +100,10 @@ export async function simpleLLMCall(
     messages: { role: string; content: string }[],
     options?: { temperature?: number; max_tokens?: number; signal?: AbortSignal; label?: string },
 ): Promise<{ content: string | null; error?: string; finishReason?: string; wasTruncated?: boolean }> {
+    const metrics = createApiCallMetrics(config);
     const baseUrl = determineBaseUrl(config);
     if (!baseUrl || !config.apiKey) {
+        pushApiLog({ ...metrics.result("error"), source: "background", characterName: options?.label, model: config.defaultModel, messages: [], rawResponse: "API 地址或密钥无效（未发出请求）" });
         return { content: null, error: "API 地址或密钥无效" };
     }
 
@@ -158,14 +160,16 @@ export async function simpleLLMCall(
 
         const bodySize = body.length;
         const bodyTokenEstimate = Math.ceil(bodySize / 3);
-        console.log("[simpleLLMCall] Request:", { url: fetchUrl.slice(0, 80), bodySize, bodyTokenEstimate, model: config.defaultModel });
+        console.log("[simpleLLMCall] Request:", { provider: config.provider, bodySize, bodyTokenEstimate, model: config.defaultModel });
 
         const res = await fetch(fetchUrl, { method: "POST", headers, body, signal: options?.signal });
+        metrics.response(res);
 
         if (!res.ok) {
-            const errText = await res.text().catch(() => "");
+            const errText = redactApiLogText(await res.text().catch(() => ""), config.apiKey);
             console.warn("[simpleLLMCall] API error:", res.status, errText.slice(0, 300));
             pushApiLog({
+                ...metrics.result("error"),
                 characterName: options?.label,
                 source: "background",
                 model: config.defaultModel,
@@ -182,6 +186,7 @@ export async function simpleLLMCall(
         const finishReason = extractFinishReason(data);
         const wasTruncated = isTruncationFinishReason(finishReason);
         pushApiLog({
+            ...metrics.result(content ? "success" : "error"),
             characterName: options?.label,
             source: "background",
             model: config.defaultModel,
@@ -197,15 +202,17 @@ export async function simpleLLMCall(
 
         return { content, finishReason, wasTruncated };
     } catch (err) {
-        console.warn("[simpleLLMCall] fetch error:", err);
+        const detail = redactApiLogText(err, config.apiKey);
+        console.warn("[simpleLLMCall] fetch error:", detail);
         pushApiLog({
+            ...metrics.result(options?.signal?.aborted ? "cancelled" : "error"),
             characterName: options?.label,
             source: "background",
             model: config.defaultModel,
             messages: messages.map(m => ({ role: m.role, content: m.content })),
-            rawResponse: `[请求失败] ${err instanceof Error ? err.message : String(err)}`,
+            rawResponse: `[请求失败] ${detail}`,
         });
-        return { content: null, error: `请求失败: ${err instanceof Error ? err.message : String(err)}` };
+        return { content: null, error: `请求失败: ${detail}` };
     }
 }
 

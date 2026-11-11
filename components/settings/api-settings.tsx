@@ -10,6 +10,7 @@ import { ConfirmDialog } from "@/components/ui/modal";
 import { Toggle, Input } from "@/components/ui/form";
 import { Alert } from "@/components/ui/feedback";
 import { determineBaseUrl, simpleLLMCall } from "@/lib/api-helpers";
+import { ApiCallMonitor } from "../api-call-monitor";
 
 const DEFAULT_CONFIGS: ApiConfig[] = [
     {
@@ -38,6 +39,7 @@ export function ApiSettings() {
     const [isNewConfig, setIsNewConfig] = useState(false);
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
     const [isLoaded, setIsLoaded] = useState(false);
+    const [showCallMonitor, setShowCallMonitor] = useState(false);
 
     // Testing and Fetching states
     const [isFetching, setIsFetching] = useState<Record<string, boolean>>({});
@@ -80,6 +82,10 @@ export function ApiSettings() {
     }, [configs, persist]);
 
     useEffect(() => {
+        if (showCallMonitor) {
+            setSubpageRightAction("api", null);
+            return () => setSubpageRightAction("api", null);
+        }
         setSubpageRightAction("api",
             <button
                 onClick={addConfig}
@@ -90,7 +96,7 @@ export function ApiSettings() {
             </button>
         );
         return () => setSubpageRightAction("api", null);
-    }, [addConfig, setSubpageRightAction]);
+    }, [addConfig, setSubpageRightAction, showCallMonitor]);
 
     const updateConfig = (id: string, updates: Partial<ApiConfig>) => {
         persist(configs.map(c => c.id === id ? { ...c, ...updates } : c));
@@ -210,11 +216,13 @@ export function ApiSettings() {
     };
 
     if (!isLoaded) return null;
+    if (showCallMonitor) return <ApiCallMonitor onBack={() => setShowCallMonitor(false)} />;
 
     return (
         <div className="flex flex-col gap-6">
             <div className="flex items-center">
                 <h2 className="m-0 mx-2 ts-28 font-bold italic leading-none text-black">API Settings</h2>
+                <button type="button" className="ui-link-btn ml-auto" onClick={() => setShowCallMonitor(true)}>查看调用记录</button>
             </div>
 
             {configs.length === 0 ? (

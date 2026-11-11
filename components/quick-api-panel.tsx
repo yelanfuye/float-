@@ -38,9 +38,10 @@ type Props = {
     scopeLabel: string;
     onBack: () => void;
     onConfirm: (model: string) => string | void;
+    onLogs?: () => void;
 };
 
-export function QuickApiPanel({ config, scopeLabel, onBack, onConfirm }: Props) {
+export function QuickApiPanel({ config, scopeLabel, onBack, onConfirm, onLogs }: Props) {
     const [bindings, setBindings] = useState(() => listApiBindings(config.id));
     useEffect(() => {
         const sync = () => setBindings(listApiBindings(config.id));
@@ -136,6 +137,7 @@ export function QuickApiPanel({ config, scopeLabel, onBack, onConfirm }: Props) 
     return (
         <div className={styles.detail}>
             <button type="button" className={styles.back} onClick={onBack}><ArrowLeft size={16} />返回预设列表</button>
+            {onLogs && <button type="button" className={styles.back} onClick={onLogs}>查看 API 调用记录 →</button>}
             <div className={styles.summary}>
                 <small>{scopeLabel}</small>
                 <h4>{config.name || config.provider}</h4>
