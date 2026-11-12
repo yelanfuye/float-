@@ -416,34 +416,121 @@ function throwIfGenerationStopped(guard?: GenerationRunGuard): void {
     }
 }
 
-function createOfflineGenerationRun(sessionId: string): Omit<ActiveGenerationRun, "pendingNativeToolCalls"> {
-    const existing = activeOfflineGenerationRuns.get(sessionId);
-    existing?.controller.abort();
-    const run = {
-        runId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        controller: new AbortController(),
-    };
-    activeOfflineGenerationRuns.set(sessionId, run);
-    return run;
-}
+// Task state belongs to the session, never to a mounted ChatRoom.
+const CHAT_OFFLINE_TASK_UPDATED = "chat-offline-task-updated";
+type OfflineTaskSnapshot = {
+    userContent: string;
+    preview: { content: string; summary: string } | null;
+    error: string | null;
+    restoreText: string;
+};
+const offlineTaskSnapshots = new Map<string, OfflineTaskSnapshot>();
 
-function isOfflineGenerationRunActive(sessionId: string, runId: string): boolean {
-    const run = activeOfflineGenerationRuns.get(sessionId);
-    return Boolean(run && run.runId === runId && !run.controller.signal.aborted);
-}
-
-function finishOfflineGenerationRun(sessionId: string, runId: string): boolean {
-    const run = activeOfflineGenerationRuns.get(sessionId);
-    if (!run || run.runId !== runId) return false;
-    activeOfflineGenerationRuns.delete(sessionId);
-    return true;
+function notifyOfflineTask(sessionId: string): void {
+    window.dispatchEvent(new CustomEvent(CHAT_OFFLINE_TASK_UPDATED, { detail: { sessionId } }));
 }
 
 function cancelOfflineGenerationRun(sessionId: string): boolean {
     const run = activeOfflineGenerationRuns.get(sessionId);
     if (!run) return false;
-    run.controller.abort();
     activeOfflineGenerationRuns.delete(sessionId);
+    run.controller.abort();
+    const state = offlineTaskSnapshots.get(sessionId);
+    if (state) {
+        state.restoreText = state.userContent;
+        state.userContent = "";
+        state.preview = null;
+    }
+    notifyOfflineTask(sessionId);
+    return true;
+}
+
+function startOfflineBackgroundTask(
+    session: ChatSession,
+    turns: ChatOfflineTurn[],
+    userContent: string,
+    previewTags: { stripTexts: string[]; summaryTag: string; offlineThinking: string[] },
+    retry = false,
+): boolean {
+    // Reopening a room must never replace or resubmit its in-flight request.
+    if (activeOfflineGenerationRuns.has(session.id)) return false;
+    if (!loadChatSessions().some(item => item.id === session.id)) return false;
+    const run = {
+        runId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        controller: new AbortController(),
+    };
+    const state: OfflineTaskSnapshot = { userContent, preview: null, error: null, restoreText: "" };
+    activeOfflineGenerationRuns.set(session.id, run);
+    offlineTaskSnapshots.set(session.id, state);
+    const isCurrent = () => activeOfflineGenerationRuns.get(session.id) === run && !run.controller.signal.aborted;
+    let raw = "";
+    let previewTimer: ReturnType<typeof setTimeout> | undefined;
+    const updatePreview = () => {
+        previewTimer = undefined;
+        if (!isCurrent()) return;
+        const previewRaw = stripLiteralTexts(raw, previewTags.stripTexts);
+        const parsed = parseOfflineResponse(previewRaw, previewTags.summaryTag);
+        const hiddenTags = [previewTags.summaryTag, ...previewTags.offlineThinking];
+        const content = (parsed.content
+            ? stripXmlTagBlocks(parsed.content, hiddenTags)
+            : stripXmlTagBlocks(previewRaw, hiddenTags)
+                .replace(/<\/?(?:content|summary|thinking|thought|think)>/gi, "")
+                .replace(/<[^>]+>/g, "")
+        ).trim();
+        state.preview = { content, summary: parsed.summary };
+        notifyOfflineTask(session.id);
+    };
+    void (async () => {
+        try {
+            if (retry) saveChatOfflineTurns(session.id, turns);
+            // Publish start only after retry history is committed, so subscribers
+            // reload the shortened history on the idle-to-running transition.
+            notifyOfflineTask(session.id);
+            const history = buildOfflinePromptHistoryShared(session, turns, userContent);
+            const options = {
+                signal: run.controller.signal,
+                userContent,
+                onStreamDelta: (delta: string) => {
+                    if (!isCurrent()) return;
+                    raw += delta;
+                    if (previewTimer === undefined) previewTimer = setTimeout(updatePreview, 80);
+                },
+            };
+            const result = session.isGroup
+                ? await generateGroupOfflineChatCompletion(session, history, options)
+                : await generateOfflineChatCompletion(session, history, options);
+            if (!isCurrent()) return;
+            // A deleted session must never be recreated by a late reply.
+            if (!loadChatSessions().some(item => item.id === session.id)) {
+                offlineTaskSnapshots.delete(session.id);
+                return;
+            }
+            const assistantContent = result.content.trim() || result.rawText.trim();
+            if (!assistantContent) throw new Error("AI 没有返回线下正文");
+            appendChatOfflineTurn({
+                sessionId: session.id, userContent, assistantContent,
+                summary: result.summary.trim(), summaryTag: result.summaryTag,
+                rawText: result.rawText, reasoningText: result.reasoning,
+                thinkingText: result.thinking, thinkingTag: result.thinkingTag,
+            });
+            if (!result.summary.trim()) {
+                state.error = `正文已生成，但未取得 <${result.summaryTag}> 摘要。正文已保留；详情可在调用日志查看。`;
+            }
+        } catch (error: unknown) {
+            if (!isCurrent()) return;
+            state.restoreText = userContent;
+            state.error = `线下${retry ? "重试" : "生成"}失败\n${redactStreamError(error)}\n\n本轮未作为完整回复保存。若已解析到正文，可在聊天底部的未完成草稿中查看。`;
+        } finally {
+            if (previewTimer !== undefined) clearTimeout(previewTimer);
+            raw = "";
+            if (activeOfflineGenerationRuns.get(session.id) === run) {
+                activeOfflineGenerationRuns.delete(session.id);
+                state.userContent = "";
+                state.preview = null;
+                notifyOfflineTask(session.id);
+            }
+        }
+    })();
     return true;
 }
 
@@ -1119,10 +1206,11 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     // 自动生图失败：弹一次弹窗提示，关掉即消失（同一轮里多张失败只提示第一条）
     const [imageGenerationFailure, setImageGenerationFailure] = useState<string | null>(null);
     const [offlineGenerationError, setOfflineGenerationError] = useState<{ sessionId: string; message: string } | null>(null);
-    const reportOfflineError = (message: string) => setOfflineGenerationError(previous => ({
-        sessionId: session.id,
-        message: previous?.sessionId === session.id ? `${previous.message}\n\n—— 后续提示 ——\n${message}` : message,
-    }));
+    const dismissOfflineError = () => {
+        const state = offlineTaskSnapshots.get(session.id);
+        if (state) state.error = null;
+        setOfflineGenerationError(null);
+    };
     const [cloudDeletePending, setCloudDeletePending] = useState<{ count: number } | null>(null);
     const [showPlusMenu, setShowPlusMenu] = useState(false);
     const [customPlusActions, setCustomPlusActions] = useState<RegisteredCustomAppChatPlusAction[]>(() => loadCustomAppChatPlusActions());
@@ -1807,6 +1895,38 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             void runManagedGeneration({ history: msgs, onDecline: triggerReply });
         }
     }, [session.id]);
+
+    // Subscribe after session initialization: remounting only observes the existing task.
+    // Cleanup removes the view listener, never aborts the session-owned request.
+    useEffect(() => {
+        let firstSync = true;
+        let wasRunning = false;
+        const syncOfflineTask = () => {
+            const state = offlineTaskSnapshots.get(session.id);
+            const running = activeOfflineGenerationRuns.has(session.id);
+            setIsOfflineGenerating(running);
+            setPendingOfflineUserText(running ? state?.userContent || "" : "");
+            offlineGenerationInputRef.current = running ? state?.userContent || "" : "";
+            setOfflineStreamPreview(running ? state?.preview || null : null);
+            setOfflineGenerationError(state?.error ? { sessionId: session.id, message: state.error } : null);
+            if (firstSync || !running || !wasRunning) {
+                setOfflineTurns(loadChatOfflineTurns(session.id));
+            }
+            if (!running && state?.restoreText) {
+                offlineTextInputRef.current?.restoreIfEmpty(state.restoreText);
+            }
+            firstSync = false;
+            wasRunning = running;
+        };
+        const onTaskUpdated = (event: Event) => {
+            if ((event as CustomEvent<{ sessionId: string }>).detail?.sessionId === session.id) {
+                syncOfflineTask();
+            }
+        };
+        window.addEventListener(CHAT_OFFLINE_TASK_UPDATED, onTaskUpdated);
+        syncOfflineTask();
+        return () => window.removeEventListener(CHAT_OFFLINE_TASK_UPDATED, onTaskUpdated);
+    }, [session.id, offlineMode]);
 
     const needsInitialScrollRef = useRef(true);
     const prevMsgCountRef = useRef(0);
@@ -4031,8 +4151,6 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
 
     const formatOfflineTurnXml = useCallback((turn: ChatOfflineTurn): string => formatOfflineTurnXmlShared(turn), []);
 
-    const buildOfflinePromptHistory = (turns: ChatOfflineTurn[], pendingUserContent: string): ChatMessage[] =>
-        buildOfflinePromptHistoryShared(session, turns, pendingUserContent);
     const getOfflineCopyText = (turn: ChatOfflineTurn, role: OfflineActionTarget["role"]): string => {
         if (role === "user") return turn.userContent;
         return formatOfflineTurnXml(turn);
@@ -4153,85 +4271,20 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     };
 
     const handleOfflineSend = (inputText: string): boolean => {
-        if (isOfflineGenerating) {
+        if (activeOfflineGenerationRuns.has(session.id)) {
             showChatToast("线下回复生成中");
             return false;
         }
         const currentText = inputText.trim();
         if (!currentText && !(session.isGroup && session.isSpectator)) return false;
-
         cancelFollowUp(session.id);
         setShowPlusMenu(false);
         setShowEmojiPanel(false);
         setShowStickerPanel(false);
         setRichModal(null);
-        setPendingOfflineUserText(currentText);
-        offlineGenerationInputRef.current = currentText;
-        setIsOfflineGenerating(true);
-        offlineStreamAccumRef.current = "";
-        setOfflineStreamPreview(null);
-        const offlineRun = createOfflineGenerationRun(session.id);
-        const offlineRunId = offlineRun.runId;
-        const isCurrentOfflineRun = () => isOfflineGenerationRunActive(session.id, offlineRunId);
-
-        void (async () => {
-            try {
-                const history = buildOfflinePromptHistory(offlineTurns, currentText);
-                const onOfflineDelta = (delta: string) => {
-                    if (!isCurrentOfflineRun()) return;
-                    offlineStreamAccumRef.current += delta;
-                    // 线下预览解析合并到 rAF 下一帧：每帧最多一次全文解析+setState
-                    if (offlineStreamFrameRef.current) return;
-                    offlineStreamFrameRef.current = window.requestAnimationFrame(() => {
-                        offlineStreamFrameRef.current = 0;
-                        if (!isCurrentOfflineRun()) return;
-                        // 与引擎顺序一致：先按预设 strip_texts 清洗原文，再解析（避免剔除文本影响 XML 结构时预览与最终结果不一致）
-                        const previewRaw = stripLiteralTexts(offlineStreamAccumRef.current, streamPreviewTagConfig.stripTexts);
-                        const parsed = parseOfflineResponse(previewRaw, streamPreviewTagConfig.summaryTag);
-                        // 流式碎片阶段 XML 标签可能未闭合：content 提取不到时，剥掉开标签残片直接显示原文；
-                        // 思维链/自定义摘要标签按当前预设整块隐藏，避免生成过程中闪现（与引擎最终清洗同源）
-                        const previewContent = (parsed.content
-                            ? stripXmlTagBlocks(parsed.content, [streamPreviewTagConfig.summaryTag, ...streamPreviewTagConfig.offlineThinking])
-                            : stripXmlTagBlocks(previewRaw, [streamPreviewTagConfig.summaryTag, ...streamPreviewTagConfig.offlineThinking])
-                                .replace(/<\/?(?:content|summary|thinking|thought|think)>/gi, "")
-                                .replace(/<[^>]+>/g, "")
-                        ).trim();
-                        setOfflineStreamPreview({ content: previewContent, summary: parsed.summary });
-                    });
-                };
-                const result = session.isGroup
-                    ? await generateGroupOfflineChatCompletion(session, history, { signal: offlineRun.controller.signal, onStreamDelta: onOfflineDelta, userContent: currentText })
-                    : await generateOfflineChatCompletion(session, history, { signal: offlineRun.controller.signal, onStreamDelta: onOfflineDelta, userContent: currentText });
-                if (!isCurrentOfflineRun()) return;
-                const assistantContent = result.content.trim() || result.rawText.trim();
-                if (!assistantContent) throw new Error("AI 没有返回线下正文");
-                if (!result.summary.trim()) reportOfflineError(`正文已生成，但未取得 <${result.summaryTag}> 摘要。\n正文将保留；若发生补提失败，详情可在调用日志查看。`);
-                const saved = appendChatOfflineTurn({
-                    sessionId: session.id,
-                    userContent: currentText,
-                    assistantContent,
-                    summary: result.summary.trim(),
-                    summaryTag: result.summaryTag,
-                    rawText: result.rawText,
-                    reasoningText: result.reasoning,
-                    thinkingText: result.thinking,
-                    thinkingTag: result.thinkingTag,
-                });
-                setOfflineTurns(prev => [...prev, saved]);
-            } catch (error: any) {
-                if (!isCurrentOfflineRun() || isAbortLikeError(error)) return;
-                offlineTextInputRef.current?.setText(currentText);
-                reportOfflineError(`线下生成失败\n${redactStreamError(error)}\n\n本轮未作为完整回复保存。若已解析到正文，可在聊天底部的未完成草稿中查看。`);
-            } finally {
-                if (!finishOfflineGenerationRun(session.id, offlineRunId)) return;
-                setPendingOfflineUserText("");
-                offlineGenerationInputRef.current = "";
-                setIsOfflineGenerating(false);
-                offlineStreamAccumRef.current = "";
-                setOfflineStreamPreview(null);
-            }
-        })();
-        return true;
+        return startOfflineBackgroundTask(
+            session, loadChatOfflineTurns(session.id), currentText, streamPreviewTagConfig,
+        );
     };
 
     const handleOfflineEditSave = () => {
@@ -4294,92 +4347,27 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
     };
 
     const handleOfflineRetryFrom = async (turnId: string) => {
-        if (isOfflineGenerating) {
+        if (activeOfflineGenerationRuns.has(session.id)) {
             showChatToast("线下回复生成中");
             return;
         }
-        const idx = offlineTurns.findIndex(turn => turn.id === turnId);
+        const storedTurns = loadChatOfflineTurns(session.id);
+        const idx = storedTurns.findIndex(turn => turn.id === turnId);
         if (idx < 0) return;
-        const targetTurn = offlineTurns[idx];
-        const baseTurns = offlineTurns.slice(0, idx);
-        const retryInput = targetTurn.userContent.trim();
+        const retryInput = storedTurns[idx].userContent.trim();
         if (!retryInput) {
             showChatToast("这一轮没有可重试的用户输入");
             return;
         }
-
         cancelFollowUp(session.id);
         setActiveOfflineTarget(null);
         setShowPlusMenu(false);
         setShowEmojiPanel(false);
         setShowStickerPanel(false);
         setRichModal(null);
-        saveChatOfflineTurns(session.id, baseTurns);
-        setOfflineTurns(baseTurns);
-        setPendingOfflineUserText(retryInput);
-        offlineGenerationInputRef.current = retryInput;
-        setIsOfflineGenerating(true);
-        offlineStreamAccumRef.current = "";
-        setOfflineStreamPreview(null);
-        const offlineRun = createOfflineGenerationRun(session.id);
-        const offlineRunId = offlineRun.runId;
-        const isCurrentOfflineRun = () => isOfflineGenerationRunActive(session.id, offlineRunId);
-
-        try {
-            const history = buildOfflinePromptHistory(baseTurns, retryInput);
-            const onOfflineDelta = (delta: string) => {
-                if (!isCurrentOfflineRun()) return;
-                offlineStreamAccumRef.current += delta;
-                // 线下预览解析合并到 rAF 下一帧：每帧最多一次全文解析+setState（与首次发送路径对齐）
-                if (offlineStreamFrameRef.current) return;
-                offlineStreamFrameRef.current = window.requestAnimationFrame(() => {
-                    offlineStreamFrameRef.current = 0;
-                    if (!isCurrentOfflineRun()) return;
-                    // 与引擎顺序一致：先按预设 strip_texts 清洗原文，再解析（避免剔除文本影响 XML 结构时预览与最终结果不一致）
-                    const previewRaw = stripLiteralTexts(offlineStreamAccumRef.current, streamPreviewTagConfig.stripTexts);
-                    const parsed = parseOfflineResponse(previewRaw, streamPreviewTagConfig.summaryTag);
-                    // 流式碎片阶段 XML 标签可能未闭合：content 提取不到时，剥掉开标签残片直接显示原文；
-                    // 思维链/自定义摘要标签按当前预设整块隐藏，避免生成过程中闪现（与引擎最终清洗同源）
-                    const previewContent = (parsed.content
-                        ? stripXmlTagBlocks(parsed.content, [streamPreviewTagConfig.summaryTag, ...streamPreviewTagConfig.offlineThinking])
-                        : stripXmlTagBlocks(previewRaw, [streamPreviewTagConfig.summaryTag, ...streamPreviewTagConfig.offlineThinking])
-                            .replace(/<\/?(?:content|summary|thinking|thought|think)>/gi, "")
-                            .replace(/<[^>]+>/g, "")
-                    ).trim();
-                    setOfflineStreamPreview({ content: previewContent, summary: parsed.summary });
-                });
-            };
-            const result = session.isGroup
-                ? await generateGroupOfflineChatCompletion(session, history, { signal: offlineRun.controller.signal, onStreamDelta: onOfflineDelta, userContent: retryInput })
-                : await generateOfflineChatCompletion(session, history, { signal: offlineRun.controller.signal, onStreamDelta: onOfflineDelta, userContent: retryInput });
-            if (!isCurrentOfflineRun()) return;
-            const assistantContent = result.content.trim() || result.rawText.trim();
-            if (!assistantContent) throw new Error("AI 没有返回线下正文");
-            if (!result.summary.trim()) reportOfflineError(`正文已生成，但未取得 <${result.summaryTag}> 摘要。\n正文将保留；若发生补提失败，详情可在调用日志查看。`);
-            const saved = appendChatOfflineTurn({
-                sessionId: session.id,
-                userContent: retryInput,
-                assistantContent,
-                summary: result.summary.trim(),
-                summaryTag: result.summaryTag,
-                rawText: result.rawText,
-                reasoningText: result.reasoning,
-                thinkingText: result.thinking,
-                thinkingTag: result.thinkingTag,
-            });
-            setOfflineTurns([...baseTurns, saved]);
-        } catch (error: any) {
-            if (!isCurrentOfflineRun() || isAbortLikeError(error)) return;
-            offlineTextInputRef.current?.setText(retryInput);
-            reportOfflineError(`线下重试失败\n${redactStreamError(error)}\n\n若已解析到正文，可在聊天底部的未完成草稿中查看。`);
-        } finally {
-            if (!finishOfflineGenerationRun(session.id, offlineRunId)) return;
-            setPendingOfflineUserText("");
-            offlineGenerationInputRef.current = "";
-            setIsOfflineGenerating(false);
-            offlineStreamAccumRef.current = "";
-            setOfflineStreamPreview(null);
-        }
+        startOfflineBackgroundTask(
+            session, storedTurns.slice(0, idx), retryInput, streamPreviewTagConfig, true,
+        );
     };
 
     const handleRetry = async (msgId: string) => {
@@ -6741,7 +6729,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
             )}
 
             {offlineGenerationError?.sessionId === session.id && (
-                <GenerationErrorPanel message={offlineGenerationError.message} onClose={() => setOfflineGenerationError(null)} />
+                <GenerationErrorPanel message={offlineGenerationError.message} onClose={dismissOfflineError} />
             )}
 
             {/* Chat toast notification (overlay, does not affect layout) */}
