@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type CSSProperties } from "react";
-import { Activity, ArrowLeft, BookOpen, Check, ChevronDown, ChevronRight, Code2, Sparkles, UserRound, X } from "lucide-react";
+import { Activity, ArrowLeft, BookOpen, Check, ChevronDown, ChevronRight, Code2, Settings, Sparkles, UserRound, X } from "lucide-react";
 import { QuickApiPanel } from "./quick-api-panel";
 import { ApiCallMonitor } from "./api-call-monitor";
 import styles from "./quick-action-paw.module.css";
@@ -52,19 +52,8 @@ function getStatusSafeTop(element: HTMLElement): number {
     return Math.max(72, (Number.isFinite(safeAreaTop) ? safeAreaTop : 48) + 18);
 }
 
-function CatPaw({ size = 24 }: { size?: number; strokeWidth?: number }) {
-    const pads = <>
-        <circle cx="7.6" cy="23" r="4.5" />
-        <circle cx="16.7" cy="12.9" r="4.7" />
-        <circle cx="30.2" cy="11.8" r="4.6" />
-        <circle cx="40.4" cy="21.4" r="4.5" />
-        <ellipse cx="24" cy="30.8" rx="11.6" ry="8.7" transform="rotate(-6 24 30.8)" />
-    </>;
-    return <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
-        <g transform="translate(.5 1.1)" fill="#697c6e" stroke="#697c6e" strokeWidth="3.8" opacity=".16">{pads}</g>
-        <g fill="#66816d" stroke="#fff" strokeWidth="3.3">{pads}</g>
-        <g fill="#66816d" stroke="#4f6b57" strokeWidth=".65">{pads}</g>
-    </svg>;
+function SettingsGlyph({ size = 24 }: { size?: number }) {
+    return <Settings size={size} strokeWidth={1.7} aria-hidden="true" />;
 }
 
 export function QuickActionFloat() {
@@ -85,6 +74,7 @@ export function QuickActionFloat() {
     const [draggingFloatingButton, setDraggingFloatingButton] = useState(false);
     const [dockSide, setDockSide] = useState<"left" | "right">("right");
     const [page, setPage] = useState<"menu" | "api" | "worldbook" | "logs">("menu");
+    const [logReturnTo, setLogReturnTo] = useState<"menu" | "api" | "detail">("menu");
     const layerRef = useRef<HTMLDivElement | null>(null);
     const floatingButtonRef = useRef<HTMLButtonElement | null>(null);
     const floatingDragRef = useRef<FloatingDragState | null>(null);
@@ -162,7 +152,7 @@ export function QuickActionFloat() {
                 if (saved?.side === "left" || saved?.side === "right") side = saved.side;
                 if (typeof saved?.ratio === "number" && Number.isFinite(saved.ratio)) ratio = Math.max(0, Math.min(1, saved.ratio));
             } catch { /* 默认靠右 */ }
-            const size = floatingButtonRef.current?.offsetWidth || 44;
+            const size = floatingButtonRef.current?.offsetWidth || 48;
             setDockSide(side);
             setFloatingPosition({
                 left: side === "left" ? 0 : Math.max(0, layer.clientWidth - size),
@@ -206,8 +196,8 @@ export function QuickActionFloat() {
             const bottomLimit = visibleTop + (visibleBottom - visibleTop) * 0.85;
             const statusSafeTop = Math.min(bottomLimit, Math.max(getStatusSafeTop(layer), visibleTop + 12));
             const posAnchor = floatingPosition ?? { left: button.offsetLeft, top: button.offsetTop };
-            const width = Math.min(344, Math.max(0, layerWidth - 32));
-            const estimatedHeight = Math.min(page === "menu" ? 390 : 520, Math.max(0, bottomLimit - statusSafeTop));
+            const width = Math.min(page === "api" && editingApi ? 400 : 344, Math.max(0, layerWidth - 32));
+            const estimatedHeight = Math.min(page === "menu" ? 390 : 650, Math.max(0, bottomLimit - statusSafeTop));
             const desiredLeft = dockSide === "left" ? posAnchor.left + 12 : posAnchor.left + button.offsetWidth - width - 12;
             const left = Math.min(Math.max(12, desiredLeft), Math.max(12, layerWidth - width - 12));
             const top = Math.min(Math.max(statusSafeTop, posAnchor.top - estimatedHeight - 8), Math.max(statusSafeTop, bottomLimit - estimatedHeight));
@@ -228,7 +218,7 @@ export function QuickActionFloat() {
             viewport?.removeEventListener("resize", apply);
             viewport?.removeEventListener("scroll", apply);
         };
-    }, [open, floatingPosition, page, dockSide]);
+    }, [open, floatingPosition, page, dockSide, editingApi]);
 
     const currentSlot: BindingSlot = useMemo(() => {
         if (scope === "global") return config.globalDefaults || {};
@@ -399,14 +389,14 @@ export function QuickActionFloat() {
             ? `继承全局：${inheritedWorldBookNames.join("、")}`
             : "继承全局";
     const popoverStyle: CSSProperties | undefined = popoverPosition
-        ? { left: popoverPosition.left, top: popoverPosition.top, maxHeight: popoverPosition.maxHeight }
+        ? { left: popoverPosition.left, top: popoverPosition.top, maxHeight: popoverPosition.maxHeight, ...(page === "api" && editingApi ? { height: Math.min(650, popoverPosition.maxHeight), width: "min(400px, calc(100% - 32px))" } : {}) }
         : undefined;
 
     const buttonClass = `quick-action-float-button ${!open && !draggingFloatingButton ? styles.edgeIdle : ""}`;
     const buttonStyle: CSSProperties = floatingPosition
         ? { left: floatingPosition.left, top: floatingPosition.top, right: "auto", bottom: "auto" }
         : { right: 0, top: "62%", bottom: "auto" };
-    const pageTitle = { menu: "快捷操作", api: "API 设置", worldbook: "世界书设置", logs: "API 调用记录" }[page];
+    const pageTitle = { menu: "设置入口", api: "API 设置", worldbook: "世界书设置", logs: "API 调用记录" }[page];
 
     return (
         <div className={`quick-action-layer ${styles.pawTheme}`} ref={layerRef}>
@@ -414,7 +404,9 @@ export function QuickActionFloat() {
                 ref={floatingButtonRef}
                 type="button"
                 className={buttonClass}
-                aria-label={open ? "关闭快捷操作" : "打开快捷操作"}
+                aria-label={open ? "关闭设置入口" : "打开设置入口"}
+                title="设置入口"
+                data-open={open ? "" : undefined}
                 aria-expanded={open}
                 aria-controls="quick-action-panel"
                 data-positioned={floatingPosition ? "" : undefined}
@@ -427,7 +419,7 @@ export function QuickActionFloat() {
                 onClick={handleFloatingButtonClick}
                 style={buttonStyle}
             >
-                <CatPaw size={24} strokeWidth={1.9} />
+                <SettingsGlyph size={24} />
             </button>
 
             {open ? (
@@ -437,41 +429,44 @@ export function QuickActionFloat() {
                     data-positioned={popoverPosition ? "" : undefined}
                     style={popoverStyle}
                     role="dialog"
-                    aria-label="快捷操作"
+                    aria-label={pageTitle}
                     onClick={event => event.stopPropagation()}
                 >
                     <div className="quick-action-header">
                         <div className="quick-action-title">
-                            {page !== "menu" ? <button type="button" className="quick-action-icon-btn" aria-label="返回快捷菜单" onClick={() => { setEditingApi(null); setPage("menu"); }}><ArrowLeft size={18} /></button> : <span className="quick-action-title-icon"><CatPaw size={18} /></span>}
+                            {page === "menu" ? <span className="quick-action-title-icon"><Settings size={17} /></span> : null}
                             <div>
                                 <h3>{pageTitle}</h3>
-                                <p>{page === "menu" ? "轻点选择 · 用完即收起" : page === "logs" ? "本机模型调用 · 非服务商后台" : scope === "global" ? "全局默认" : selectedCharacter?.name || "角色默认"}</p>
+                                {page === "menu" ? <p>轻点选择 · 用完即收起</p> : page === "logs" ? <p>本机模型调用 · 非服务商后台</p> : null}
                             </div>
                         </div>
-                        <button type="button" className="quick-action-icon-btn" onClick={handleClose} aria-label="关闭快捷操作">
-                            <X size={18} />
-                        </button>
+                        <div className="quick-action-header-actions">
+                            {(page === "api" && !editingApi) || page === "worldbook" ? <button type="button" className="quick-action-icon-btn" aria-label="返回设置入口" onClick={() => setPage("menu")}><ArrowLeft size={18} /></button> : null}
+                            <button type="button" className="quick-action-icon-btn" onClick={handleClose} aria-label="关闭设置入口">
+                                <X size={18} />
+                            </button>
+                        </div>
                     </div>
 
-                    <div className="quick-action-body">
+                    <div className={`quick-action-body ${page === "api" && editingApi ? styles.apiDetailBody : ""}`}>
                         {page === "menu" ? <>
                             <div className={styles.menuGroup}>
-                                <button type="button" className={styles.menuRow} onClick={() => setPage("api")}><span className={styles.menuIcon} data-tone="blue"><Code2 size={18} /></span><span><b>API 设置</b><small>选择配置、切换模型与测试连接</small></span><ChevronRight size={16} /></button>
-                                <button type="button" className={styles.menuRow} onClick={() => { handleClose(); openMascotPanel(); }}><span className={styles.menuIcon} data-tone="purple"><Sparkles size={18} /></span><span><b>小卷悬浮窗</b><small>打开助手，保留现有对话</small></span><ChevronRight size={16} /></button>
-                                <button type="button" className={styles.menuRow} onClick={() => setPage("worldbook")}><span className={styles.menuIcon} data-tone="orange"><BookOpen size={18} /></span><span><b>世界书设置</b><small>按全局或角色选择绑定</small></span><ChevronRight size={16} /></button>
+                                <button type="button" className={styles.menuRow} onClick={() => setPage("api")}><span className={styles.menuIcon} data-tone="blue"><Code2 size={18} /></span><span><b>API 设置</b><small>配置与模型</small></span><ChevronRight size={16} /></button>
+                                <button type="button" className={styles.menuRow} onClick={() => { handleClose(); openMascotPanel(); }}><span className={styles.menuIcon} data-tone="purple"><Sparkles size={18} /></span><span><b>小卷悬浮窗</b><small>打开助手</small></span><ChevronRight size={16} /></button>
+                                <button type="button" className={styles.menuRow} onClick={() => setPage("worldbook")}><span className={styles.menuIcon} data-tone="orange"><BookOpen size={18} /></span><span><b>世界书设置</b><small>选择绑定</small></span><ChevronRight size={16} /></button>
                             </div>
                             <div className={styles.menuGroup}>
-                                <button type="button" className={styles.menuRow} onClick={() => setPage("logs")}><span className={styles.menuIcon} data-tone="green"><Activity size={18} /></span><span><b>API 调用记录</b><small>查看调用结果、耗时与报错</small></span><ChevronRight size={16} /></button>
+                                <button type="button" className={styles.menuRow} onClick={() => { setLogReturnTo("menu"); setPage("logs"); }}><span className={styles.menuIcon} data-tone="green"><Activity size={18} /></span><span><b>API 调用记录</b><small>结果与报错</small></span><ChevronRight size={16} /></button>
                             </div>
-                            <p className={styles.note}>入口常态贴边半隐藏；拖动后自动吸附最近一侧。点击空白处或关闭按钮即可收起。</p>
-                        </> : page === "logs" ? <ApiCallMonitor /> : editingApi ? (
+                            <p className={styles.note}>拖动可换边 · 点空白收起</p>
+                        </> : page === "logs" ? <ApiCallMonitor onBack={() => setPage(logReturnTo === "detail" ? "api" : logReturnTo)} /> : editingApi ? (
                             <QuickApiPanel
                                 key={editingApi.id}
                                 config={editingApi}
                                 scopeLabel={scope === "global" ? "全局默认" : `${selectedCharacter?.name || "角色"}的默认配置`}
                                 onBack={() => { setEditingApi(null); reloadData(); }}
                                 onConfirm={confirmApiModel}
-                                onLogs={() => { setEditingApi(null); setPage("logs"); }}
+                                onLogs={() => { setLogReturnTo("detail"); setPage("logs"); }}
                             />
                         ) : <>
                         <div className="quick-action-tabs" role="tablist" aria-label="绑定范围">
@@ -513,7 +508,7 @@ export function QuickActionFloat() {
 
                         {page === "api" ? <>
                         <div className={styles.actions}>
-                            <button type="button" onClick={() => setPage("logs")}><Activity size={15} />查看调用记录</button>
+                            <button type="button" onClick={() => { setLogReturnTo("api"); setPage("logs"); }}><Activity size={15} />查看调用记录</button>
                             <button type="button" onClick={() => { handleClose(); mascotNavigate("settings", "api"); }}>完整 API 设置<ChevronRight size={15} /></button>
                         </div>
                         <section className="quick-action-section" data-disabled={characterDisabled ? "" : undefined}>

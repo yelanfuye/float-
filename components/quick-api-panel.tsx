@@ -135,9 +135,12 @@ export function QuickApiPanel({ config, scopeLabel, onBack, onConfirm, onLogs }:
     }
 
     return (
-        <div className={styles.detail}>
-            <button type="button" className={styles.back} onClick={onBack}><ArrowLeft size={16} />返回预设列表</button>
-            {onLogs && <button type="button" className={styles.back} onClick={onLogs}>查看 API 调用记录 →</button>}
+        <div className={styles.quickApiDetail}>
+            <div className={styles.navRow}>
+                <button type="button" className={styles.back} onClick={onBack} aria-label="返回上一级"><ArrowLeft size={15} />返回上一级</button>
+                {onLogs && <button type="button" className={styles.logsLink} onClick={onLogs}>调用记录 <ArrowLeft className={styles.forwardIcon} size={14} /></button>}
+            </div>
+            <div className={styles.detailBody}>
             <div className={styles.summary}>
                 <small>{scopeLabel}</small>
                 <h4>{config.name || config.provider}</h4>
@@ -160,12 +163,15 @@ export function QuickApiPanel({ config, scopeLabel, onBack, onConfirm, onLogs }:
                 <button type="button" disabled={!!busy} onClick={() => void run("models")}><RefreshCw size={15} />{busy === "models" ? "拉取中…" : "拉取模型"}</button>
                 <button type="button" disabled={!!busy || !model.trim()} onClick={() => void run("test")}><PlugZap size={15} />{busy === "test" ? "测试中…" : "测试连接"}</button>
             </div>
-            <p className={styles.note}>确认后更新这份 API 预设的模型，并应用到{scopeLabel}。其他使用同一份预设的角色也会使用新模型。测试会发送一条简短请求，可能产生少量费用。</p>
+            <p className={styles.note}>应用到{scopeLabel}，共用此预设的项目同步切换模型。连接测试可能产生费用。</p>
             {result && <p role="status" aria-live="polite" className={styles.result} data-ok={result.ok}>{result.text}</p>}
-            <button type="button" className={styles.confirm} disabled={!!busy || !model.trim()} onClick={() => {
-                const error = onConfirm(model.trim());
-                if (error) setResult({ ok: false, text: error });
-            }}><Check size={16} />确认并应用</button>
+            </div>
+            <div className={styles.confirmBar}>
+                <button type="button" className={styles.confirm} disabled={!!busy || !model.trim()} onClick={() => {
+                    const error = onConfirm(model.trim());
+                    if (error) setResult({ ok: false, text: error });
+                }}><Check size={16} />确认并应用</button>
+            </div>
         </div>
     );
 }
