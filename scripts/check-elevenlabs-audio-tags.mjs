@@ -9,8 +9,19 @@ const root = process.cwd();
 const nativeRequire = createRequire(import.meta.url);
 const cache = new Map();
 const mocks = {
-    "./llm-provider-adapter": { buildProviderRequest() { throw new Error("Network must not be used in regression checks"); } },
-    "./llm-http": { fetchLlmPayload() { throw new Error("Network must not be used in regression checks"); } },
+    "./llm-provider-adapter": {
+        buildProviderRequest() { return { providerKind: "openai-compatible" }; },
+        parseProviderResponse(_kind, data) { return data; },
+    },
+    "./llm-http": { async fetchLlmPayload() {
+        return { ok: true, json: async () => ({ content: JSON.stringify({ cues: [{ offset: 0, tag: "curious" }] }) }) };
+    } },
+    "./settings-storage": {
+        loadBindingConfig: () => ({}),
+        resolveBinding: () => ({ voiceConfigId: "voice", apiConfigId: "chat" }),
+        loadVoiceConfigs: () => [{ id: "voice", provider: "ElevenLabs", model: "eleven_v3" }],
+        loadApiConfigs: () => [{ id: "chat", defaultModel: "offline-mock" }],
+    },
     "./action-parser": { stripActionShells: text => text },
     "./text-tool-protocol": { stripTextToolDirectives: text => text },
     "./custom-app-chat-directives": { loadCustomAppChatDirectives: () => [] },
@@ -58,4 +69,11 @@ assert.equal(parsed.parts[0].mediaData.label, "你好。\n\n请填写[姓名]。
 assert.equal(parsed.parts[0].mediaData.speechPerformanceText, "[curious]你好。\n\n[whispers]请填写[姓名]。");
 assert.equal(parsed.parts[1].content, "正常消息");
 assert.equal(parseAIResponse("[语音条:旧消息]", []).parts[0].mediaData.label, "旧消息");
-console.log("ElevenLabs audio tag regression checks passed (offline; parser dependencies mocked).");
+const { ensureVoiceTagsInResponse } = load("lib/elevenlabs-performance.ts");
+assert.equal(await ensureVoiceTagsInResponse("[语音条:你回来了。]", { characterId: "test" }), "[语音条:[curious]你回来了。]");
+assert.equal(await ensureVoiceTagsInResponse("[语音条:[whispers]别出声。]", { characterId: "test" }), "[语音条:[whispers]别出声。]");
+assert.equal(await ensureVoiceTagsInResponse("普通文字", { characterId: "test" }), "普通文字");
+assert.equal(await ensureVoiceTagsInResponse("[语音条:Hello | 你好]", { characterId: "test" }), "[语音条:[curious]Hello | 你好]");
+const multiline = "[语音条:Hello | 你好\nBye | 再见]";
+assert.equal(await ensureVoiceTagsInResponse(multiline, { characterId: "test" }), "[语音条:[curious]Hello | 你好\nBye | 再见]");
+console.log("ElevenLabs audio tag regression checks passed (offline; API and parser dependencies mocked).");

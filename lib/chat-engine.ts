@@ -2556,7 +2556,31 @@ export async function generateChatCompletion(
         shortcutCancelled: false,
     };
     try {
-        return await generateChatCompletionCore(session, history, options, callbacks, bailoutRef);
+        const { ensureVoiceTagsInResponse } = await import("./elevenlabs-performance");
+        const character = loadCharacters().find(item => item.id === session.contactId);
+        const performanceOptions = {
+            characterId: session.contactId,
+            appId: "chat" as const,
+            signal: options?.signal,
+            context: JSON.stringify({ character: character ? { name: character.name, persona: character.persona, personality: character.personality } : null,
+                history: history.slice(-12).map(item => ({ role: item.role, text: item.mediaData?.label || item.content })) }),
+        };
+        const enrich = (text: string) => (options?.appId ?? "chat") === "chat"
+            ? ensureVoiceTagsInResponse(text, performanceOptions) : Promise.resolve(text);
+        const delivered = new Map<string, string>();
+        const guardedCallbacks: ChatCompletionCallbacks = {
+            ...callbacks,
+            onTextPart: async (text, actor, metadata) => {
+                const tagged = await enrich(text);
+                delivered.set(text, tagged);
+                await callbacks?.onTextPart?.(tagged, actor, metadata
+                    ? { ...metadata, rawResponseText: tagged } : metadata);
+            },
+        };
+        const result = await generateChatCompletionCore(session, history, options, guardedCallbacks, bailoutRef);
+        return { ...result, parts: await Promise.all(result.parts.map(async part => ({ ...part,
+            text: delivered.get(part.text) ?? await enrich(part.text),
+        }))) };
     } catch (err) {
         if (options?.signal?.aborted) bailoutRef.shortcutCancelled = true;
         throw err;

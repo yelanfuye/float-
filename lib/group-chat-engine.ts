@@ -809,6 +809,19 @@ export async function generateGroupChatCompletion(
     });
     const chars = loadCharacters();
     const participantIds = session.participantIds || [];
+    const originalOnTextPart = callbacks?.onTextPart;
+    callbacks = { ...callbacks, onTextPart: async (text, actor, metadata) => {
+        const { ensureVoiceTagsInResponse } = await import("./elevenlabs-performance");
+        const character = chars.find(item => item.id === actor?.characterId);
+        const tagged = actor?.characterId ? await ensureVoiceTagsInResponse(text, {
+            characterId: actor.characterId, appId: "group_chat", signal: options?.signal,
+            context: JSON.stringify({ character: character ? { name: character.name, persona: character.persona, personality: character.personality } : null,
+                history: history.slice(-12).map(item => ({ role: item.role, senderName: item.senderName, text: item.mediaData?.label || item.content })) }),
+        }) : text;
+        const taggedActor = actor?.editableResponseText
+            ? { ...actor, editableResponseText: actor.editableResponseText.replace(text, tagged) } : actor;
+        await originalOnTextPart?.(tagged, taggedActor, metadata ? { ...metadata, rawResponseText: tagged } : metadata);
+    } };
 
     const MAX_TOOL_ROUNDS = 5;
     const meta = { characterName: `群聊:${session.groupName || "群聊"}` };
@@ -1078,7 +1091,14 @@ export async function generateGroupChatCompletion(
             }).catch(err => console.warn("[GroupChat] Action dispatch failed:", err));
         }
         if (cleanText.trim()) {
-            finalResults.push({ ...r, responseText: cleanText });
+            const { ensureVoiceTagsInResponse } = await import("./elevenlabs-performance");
+            const character = chars.find(item => item.id === r.characterId);
+            const taggedText = await ensureVoiceTagsInResponse(cleanText, {
+                characterId: r.characterId, appId: "group_chat", signal: options?.signal,
+                context: JSON.stringify({ character: character ? { name: character.name, persona: character.persona, personality: character.personality } : null,
+                    history: history.slice(-12).map(item => ({ role: item.role, senderName: item.senderName, text: item.mediaData?.label || item.content })) }),
+            });
+            finalResults.push({ ...r, responseText: taggedText });
         }
     }
 

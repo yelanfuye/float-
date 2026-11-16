@@ -1,7 +1,41 @@
 import type { ApiConfig, ContentAppId } from "./settings-types";
 import { buildProviderRequest, parseProviderResponse } from "./llm-provider-adapter";
 import { fetchLlmPayload } from "./llm-http";
-import { hasElevenAudioTags, isElevenAudioTag, ELEVEN_AUDIO_TAG_INSTRUCTION } from "./elevenlabs-audio-tags";
+import { hasElevenAudioTags, isElevenAudioTag, ELEVEN_AUDIO_TAG_INSTRUCTION, supportsElevenAudioTags } from "./elevenlabs-audio-tags";
+import { splitBilingualText } from "./bilingual-text";
+
+/** 在回复交付前补齐语音标签，让保存的原文与合成台词保持一致。 */
+export async function ensureVoiceTagsInResponse(text: string, options: SpeechPerformanceContext): Promise<string> {
+    const pattern = /\[语音条\s*[：:]\s*((?:[^\[\]]|\[[^\[\]]*\])+)\]/g;
+    const matches = [...text.matchAll(pattern)];
+    if (!matches.length) return text;
+    const { loadBindingConfig, resolveBinding, loadVoiceConfigs } = await import("./settings-storage");
+    const slot = resolveBinding(loadBindingConfig(), options.characterId, options.appId || "chat");
+    const voice = loadVoiceConfigs().find(item => item.id === slot.voiceConfigId);
+    if (!voice || !supportsElevenAudioTags(voice)) return text;
+    let result = "";
+    let cursor = 0;
+    for (const match of matches) {
+        const body = match[1];
+        const original = splitBilingualText(body)?.original || body;
+        if (hasElevenAudioTags(original)) {
+            result += text.slice(cursor, match.index! + match[0].length);
+            cursor = match.index! + match[0].length;
+            continue;
+        }
+        const performed = await prepareElevenPerformance(original, options);
+        const position = body.indexOf(original);
+        // 多行双语的 original 由多段拼接，未必是原始 body 的连续子串。
+        // 此时只复用开头的演绎标签，保留全部原文与译文的布局。
+        const leadingTags = performed.match(/^(?:\[[^\[\]]+\])+/)?.[0];
+        if (position < 0 && !leadingTags) throw new Error("无法定位语音原文，请重新生成");
+        const nextBody = position < 0 ? leadingTags + body
+            : body.slice(0, position) + performed + body.slice(position + original.length);
+        result += text.slice(cursor, match.index!) + `[语音条:${nextBody}]`;
+        cursor = match.index! + match[0].length;
+    }
+    return result + text.slice(cursor);
+}
 
 export type SpeechPerformanceContext = { characterId?: string; appId?: ContentAppId; context?: string; signal?: AbortSignal };
 const prepared = new Map<string, string>();

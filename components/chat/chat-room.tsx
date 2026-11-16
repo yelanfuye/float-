@@ -4517,7 +4517,18 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         setEditingContent("");
         setEditingResponseBatchId(msg.responseBatchId);
         setEditingResponseRoundId(null);
-        setEditingResponseContent(msg.rawResponseText);
+        // 播放旧消息时补出的演绎保存在 mediaData，编辑整轮回复时也要带回来。
+        const batchVoices = loadChatMessages(session.id)
+            .filter(item => item.responseBatchId === msg.responseBatchId && item.mediaType === "audio")
+            .sort(compareChatMessages);
+        let voiceIndex = 0;
+        const editable = msg.rawResponseText.replace(/\[语音条\s*[：:]\s*((?:[^\[\]]|\[[^\[\]]*\])+)\]/g, (full, body: string) => {
+            const voice = batchVoices[voiceIndex++];
+            const performed = voice?.mediaData?.speechPerformanceText;
+            return performed && voice?.mediaData?.speechPerformanceSource === body.trim()
+                ? `[语音条:${performed}]` : full;
+        });
+        setEditingResponseContent(editable);
         setActiveMessageId(null);
     };
 
