@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { VoiceApiConfig } from "@/lib/settings-types";
 import { fetchElevenModels, fetchElevenVoices, type ElevenModel, type ElevenVoice } from "@/lib/elevenlabs-service";
 import { Input } from "@/components/ui/form";
+import { supportsElevenAudioTags } from "@/lib/elevenlabs-audio-tags";
 
 export function ElevenLabsOptions({ config, onChange, onPreview, playing }: {
     config: VoiceApiConfig;
@@ -67,13 +68,13 @@ export function ElevenLabsOptions({ config, onChange, onPreview, playing }: {
         </div>
         <select className="ui-select" aria-label="ElevenLabs 模型" value={customModel ? "__manual__" : config.model || ""} onChange={event => {
             setManualModel(event.target.value === "__manual__");
-            if (event.target.value !== "__manual__") onChange({ model: event.target.value });
+            if (event.target.value !== "__manual__") onChange({ model: event.target.value, elevenAudioTags: undefined });
         }}>
             <option value="" disabled>请选择模型</option>
             {models.map(model => <option key={model.id} value={model.id}>{model.name} ({model.id})</option>)}
             <option value="__manual__">自行填写模型 ID</option>
         </select>
-        {customModel && <Input aria-label="ElevenLabs 模型 ID" value={config.model || ""} placeholder="例如 eleven_v3" onChange={event => onChange({ model: event.target.value })} />}
+        {customModel && <Input aria-label="ElevenLabs 模型 ID" value={config.model || ""} placeholder="例如 eleven_v3" onChange={event => onChange({ model: event.target.value, elevenAudioTags: undefined })} />}
         {modelError && <span role="alert" className="menu-desc">{modelError}</span>}
         {!modelBusy && !modelError && apiKey.trim() && !models.length && <span className="menu-desc">未返回可用 TTS 模型，可刷新或手填 ID。</span>}
         <div className="flex justify-between items-center">
@@ -92,6 +93,11 @@ export function ElevenLabsOptions({ config, onChange, onPreview, playing }: {
         {voiceError && <span role="alert" className="menu-desc">{voiceError}</span>}
         {!voiceBusy && !voiceError && apiKey.trim() && !voices.length && <span className="menu-desc">未返回账户音色，可刷新或自行填写 ID。</span>}
         <button type="button" className="ui-btn ui-btn-soft-action" disabled={!playing && (!apiKey.trim() || !config.model?.trim() || !config.defaultVoice.trim())} onClick={onPreview}>{playing ? "停止试听" : "试听（调用语音 API）"}</button>
-        <span className="menu-desc">列表刷新不会修改已保存的模型和音色。v3 的语气标签由语音文本提供，接口不自动添加。</span>
+        <label className="menu-desc flex items-center gap-2">
+            <input type="checkbox" checked={supportsElevenAudioTags(config)} onChange={event => onChange({ elevenAudioTags: event.target.checked })} />
+            此模型支持语音演绎标签
+        </label>
+        <span className="menu-desc">v3 默认启用；其他模型请确认支持后开启。启用后每条新合成语音至少包含一个标签，结合台词和上下文生成。旧消息缺少标签时会调用聊天 API 补充，失败可重试；已有音频继续使用。</span>
+        <span className="menu-desc">口音仅按角色设定或剧情需要使用，实际表现取决于模型与音色。列表刷新不会修改已保存的模型和音色。</span>
     </div>;
 }

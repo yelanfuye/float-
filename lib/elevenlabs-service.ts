@@ -1,4 +1,5 @@
 import type { VoiceApiConfig } from "./settings-types";
+import { supportsElevenAudioTags, hasElevenAudioTags } from "./elevenlabs-audio-tags";
 
 export type ElevenModel = { id: string; name: string; limit?: number };
 export type ElevenVoice = { id: string; name: string };
@@ -84,6 +85,9 @@ const V3_TEXT_LIMIT = 5000;
 export async function synthesizeElevenSpeech(text: string, config: VoiceApiConfig, signal?: AbortSignal): Promise<Blob> {
     if (!config.model?.trim()) throw new Error("请选择 ElevenLabs 语音模型");
     if (!config.defaultVoice.trim()) throw new Error("请选择音色或填写 Voice ID");
+    if (supportsElevenAudioTags(config) && !hasElevenAudioTags(text)) {
+        throw new Error("语音缺少演绎标签，请重新生成语音演绎后重试");
+    }
     if (config.model.trim() === "eleven_v3" && Array.from(text).length > V3_TEXT_LIMIT) {
         throw new Error(`v3 单次语音文本请控制在 ${V3_TEXT_LIMIT} 字符以内（客户端保守检查包含标签）`);
     }

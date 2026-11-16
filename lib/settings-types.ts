@@ -165,6 +165,8 @@ export type VoiceApiConfig = {
     region?: string;
     model?: string;
     sttModel?: string;
+    /** 未设置时仅 eleven_v3 默认启用；其他模型须明确确认能力后开启。 */
+    elevenAudioTags?: boolean;
     defaultVoice: string;
     languageBoost?: string;
     /** Minimax voice_setting.speed. Missing values keep the legacy 1.0x behavior. */

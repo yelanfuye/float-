@@ -199,6 +199,9 @@ export type ChatMessage = {
         callDuration?: string;    // 通话时长（如 05:23）
         voiceDuration?: number;   // 语音条时长（秒）
         synthesizedFromText?: string; // 语音条当前音频对应的合成文本
+        speechPerformanceText?: string; // 含演绎标签的台词；label 保持纯正文
+        speechPerformanceSource?: string; // 补标签时的纯台词，用于判断编辑后是否失效
+        synthesizedPerformanceText?: string; // 当前音频实际采用的演绎文本，用于语气变更后的缓存失效
         memoryContent?: string;   // 记忆写入内容
         memoryReason?: string;    // 记忆写入原因
         memoryImportance?: number;// 记忆写入重要性
@@ -1771,13 +1774,17 @@ export async function persistMessageVoiceAudio(
     messageId: string,
     mediaUrl: string,
     synthesizedFromText: string,
+    speechPerformanceText?: string,
 ): Promise<void> {
+    const performance = speechPerformanceText
+        ? { speechPerformanceText, speechPerformanceSource: synthesizedFromText, synthesizedPerformanceText: speechPerformanceText }
+        : { synthesizedPerformanceText: undefined };
     const idx = _messagesCache.findIndex(m => m.id === messageId);
     if (idx !== -1) {
         const next = {
             ..._messagesCache[idx],
             mediaUrl,
-            mediaData: { ..._messagesCache[idx].mediaData, synthesizedFromText },
+            mediaData: { ..._messagesCache[idx].mediaData, synthesizedFromText, ...performance },
         };
         _messagesCache[idx] = next;
         dbPutMessage(next);
@@ -1789,7 +1796,7 @@ export async function persistMessageVoiceAudio(
             await chatDb.messages.put({
                 ...stored,
                 mediaUrl,
-                mediaData: { ...stored.mediaData, synthesizedFromText },
+                mediaData: { ...stored.mediaData, synthesizedFromText, ...performance },
             });
         }
     } catch (err) {

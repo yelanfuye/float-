@@ -13,6 +13,7 @@ import { ContactCardGenerateFlow } from "@/components/chat/contact-card-generate
 import { MediaPreviewOverlay } from "@/components/chat/media-preview-overlay";
 import { findStickerByName } from "@/lib/sticker-data";
 import { splitBilingualText } from "@/lib/bilingual-text";
+import { stripElevenAudioTags } from "@/lib/elevenlabs-audio-tags";
 import { isInvisibleOrWhitespaceOnly } from "@/lib/rich-message-parser";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
@@ -147,6 +148,9 @@ export const MessageBubble = memo(function MessageBubble({ msg, onUpdate, charNa
         if (prev.msg.isTyping !== next.msg.isTyping) return false;
         if (prev.msg.mediaData?.status !== next.msg.mediaData?.status) return false;
         if (prev.msg.mediaData?.label !== next.msg.mediaData?.label) return false;
+        if (prev.msg.mediaData?.speechPerformanceText !== next.msg.mediaData?.speechPerformanceText) return false;
+        if (prev.msg.mediaData?.synthesizedPerformanceText !== next.msg.mediaData?.synthesizedPerformanceText) return false;
+        if (prev.msg.mediaData?.synthesizedFromText !== next.msg.mediaData?.synthesizedFromText) return false;
         if (prev.msg.mediaData?.claimedBy?.length !== next.msg.mediaData?.claimedBy?.length) return false;
         if (prev.msg.mediaData?.appName !== next.msg.mediaData?.appName) return false;
         if (prev.msg.mediaData?.appCardTitle !== next.msg.mediaData?.appCardTitle) return false;
@@ -2261,16 +2265,36 @@ function XiaohongshuShareBubble({ msg }: { msg: ChatMessage }) {
 // 模块级在途表：同一条消息全局只允许一个合成请求。组件重渲染/卸载重挂都
 // 复用同一个 Promise——之前"挂载即合成 + 取消竞态"会把同一条语音反复送去
 // 计费还留下点不动的死气泡（用户实报），点击触发 + 全局去重从根上断掉。
-const _voiceSynthInFlight = new Map<string, Promise<string>>();
+type VoiceSynthesisResult = { dataUrl: string; performanceText?: string };
+const _voiceSynthInFlight = new Map<string, Promise<VoiceSynthesisResult>>();
 
-function synthesizeVoiceForMessage(msgId: string, characterId: string, speechText: string): Promise<string> {
-    const existing = _voiceSynthInFlight.get(msgId);
+function synthesizeVoiceForMessage(msg: ChatMessage, characterId: string, speechText: string, performanceText?: string): Promise<VoiceSynthesisResult> {
+    const msgId = msg.id;
+    const requestKey = JSON.stringify([msgId, speechText, performanceText]);
+    const existing = _voiceSynthInFlight.get(requestKey);
     if (existing) return existing;
     const task = (async () => {
         const { resolveVoiceConfig, synthesizeSpeech } = await import("@/lib/tts-service");
-        const vc = resolveVoiceConfig(characterId);
+        const { chatDb } = await import("@/lib/chat-db");
+        const session = await chatDb.sessions.get(msg.sessionId);
+        const appId = session?.isGroup ? "group_chat" : "chat";
+        const vc = resolveVoiceConfig(characterId, appId);
         if (!vc) throw new Error("未绑定语音配置");
-        const blob = await synthesizeSpeech(speechText, vc);
+        const { supportsElevenAudioTags } = await import("@/lib/elevenlabs-audio-tags");
+        const useTags = supportsElevenAudioTags(vc);
+        let performed = useTags ? performanceText : undefined;
+        let context: string | undefined;
+        if (useTags && !performed) {
+            const character = loadCharacters().find(item => item.id === characterId);
+            const recent = await chatDb.messages.where("sessionId").equals(msg.sessionId)
+                .filter(item => item.createdAt <= msg.createdAt && item.id !== msg.id && !item.isRetracted).toArray();
+            const history = recent.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || (a.order || 0) - (b.order || 0)).slice(-12);
+            context = JSON.stringify({ character: character ? { name: character.name, persona: character.persona, personality: character.personality } : null,
+                history: history.map(item => ({ role: item.role, text: item.mediaData?.label || item.content })) });
+        }
+        const blob = await synthesizeSpeech(performed || speechText, vc, {
+            characterId, appId, context, onPerformanceText: value => { performed = value; },
+        });
         if (!blob) throw new Error("合成失败");
         const dataUrl = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
@@ -2280,11 +2304,11 @@ function synthesizeVoiceForMessage(msgId: string, characterId: string, speechTex
         });
         // 直接落库（不依赖会话缓存）——合成一次的音频永久保存，绝不重复计费
         const { persistMessageVoiceAudio } = await import("@/lib/chat-storage");
-        await persistMessageVoiceAudio(msgId, dataUrl, speechText);
-        return dataUrl;
+        await persistMessageVoiceAudio(msgId, dataUrl, speechText, performed);
+        return { dataUrl, performanceText: performed };
     })();
-    _voiceSynthInFlight.set(msgId, task);
-    task.catch(() => {}).then(() => { _voiceSynthInFlight.delete(msgId); });
+    _voiceSynthInFlight.set(requestKey, task);
+    task.catch(() => {}).then(() => { _voiceSynthInFlight.delete(requestKey); });
     return task;
 }
 
@@ -2292,6 +2316,7 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
     const [playing, setPlaying] = useState(false);
     const [synthesizing, setSynthesizing] = useState(false);
     const [synthFailed, setSynthFailed] = useState(false);
+    const [synthError, setSynthError] = useState("");
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const stopVoiceRef = useRef<(() => void) | null>(null);
     const mountedRef = useRef(true);
@@ -2299,8 +2324,16 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
     const text = msg.mediaData?.label || "语音消息";
     const bilingual = splitBilingualText(text);
     const speechText = bilingual?.original || text;
+    const rawPerformance = msg.mediaData?.speechPerformanceText;
+    const performanceOriginal = rawPerformance ? (splitBilingualText(rawPerformance)?.original || rawPerformance) : undefined;
+    const performanceText = performanceOriginal && stripElevenAudioTags(performanceOriginal) === speechText.trim()
+        ? performanceOriginal : undefined;
     const synthesizedFromText = msg.mediaData?.synthesizedFromText;
-    const needsResynthesis = msg.role !== "user" && synthesizedFromText !== speechText;
+    const needsResynthesis = msg.role !== "user" && (
+        (synthesizedFromText !== undefined && synthesizedFromText !== speechText)
+        || (msg.mediaData?.synthesizedPerformanceText !== undefined
+            && msg.mediaData.synthesizedPerformanceText !== performanceText)
+    );
     const duration = msg.mediaData?.voiceDuration || Math.max(2, Math.ceil(speechText.length / 4));
 
     const playSrc = (src: string) => {
@@ -2348,17 +2381,22 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
         }
         setSynthesizing(true);
         setSynthFailed(false);
-        synthesizeVoiceForMessage(msg.id, characterId, speechText)
-            .then((dataUrl) => {
-                if (onUpdate) onUpdate({ ...msg, mediaUrl: dataUrl, mediaData: { ...msg.mediaData, synthesizedFromText: speechText } });
+        setSynthError("");
+        synthesizeVoiceForMessage(msg, characterId, speechText, performanceText)
+            .then(({ dataUrl, performanceText: performed }) => {
+                if (onUpdate) onUpdate({ ...msg, mediaUrl: dataUrl, mediaData: { ...msg.mediaData, synthesizedFromText: speechText,
+                    synthesizedPerformanceText: performed,
+                    ...(performed ? { speechPerformanceText: performed, speechPerformanceSource: speechText } : {}),
+                } });
                 if (!mountedRef.current) return;
                 setSynthesizing(false);
                 playSrc(dataUrl);
             })
-            .catch(() => {
+            .catch(error => {
                 if (!mountedRef.current) return;
                 setSynthesizing(false);
                 setSynthFailed(true);
+                setSynthError(error instanceof Error ? error.message : "语音合成失败，请重试");
             });
     };
 
@@ -2374,6 +2412,7 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
 
     return (
         <div className="voice-msg-bubble" onClick={handlePlay}
+            title={synthError || undefined}
             style={{ minWidth: `${Math.min(60 + duration * 8, 220)}px` }}
         >
             <div className="voice-msg-icon-shell">

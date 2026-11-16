@@ -13,6 +13,7 @@ import type { ChatMessage } from "./chat-storage";
 import type { StateValue } from "./chat-storage";
 import { parseStateValues, mergeStateValues } from "./state-value-parser";
 import { stripActionShells } from "./action-parser";
+import { stripElevenAudioTags, hasElevenAudioTags } from "./elevenlabs-audio-tags";
 import { stripTextToolDirectives } from "./text-tool-protocol";
 import {
     formatCustomAppDirectiveSummary,
@@ -250,12 +251,15 @@ const RICH_PATTERNS: {
         },
     },
     {
-        // [语音条:文字内容] — voice message
-        regex: new RegExp(`\\[语音条${C}([^\\]]+)\\]`),
+        // 允许台词包含完整的方括号内容，不能在音频标签的 ] 处提前结束。
+        regex: new RegExp(`\\[语音条${C}((?:[^\\[\\]]|\\[[^\\[\\]]*\\])+)\\]`),
         build: (m) => ({
             content: "",
             mediaType: "audio" as const,
-            mediaData: { label: m[1].trim() },
+            mediaData: {
+                label: stripElevenAudioTags(m[1]),
+                ...(hasElevenAudioTags(m[1]) ? { speechPerformanceText: m[1].trim() } : {}),
+            },
         }),
     },
     {
@@ -647,7 +651,15 @@ export function parseAIResponse(rawText: string, previousState: StateValue[]): P
         .replace(/(\[表情包[：:][^\]]+\])\n\n+/g, "$1\n");
 
     // 3. Split by double newlines (placeholders still in place)
-    const segments = stickerMerged.split(/\n\n+/).map(s => s.trim()).filter(Boolean);
+    // 语音条内的空行属于同一段台词，不能先按空行拆坏外层协议。
+    const voiceBlocks: string[] = [];
+    const splitReady = stickerMerged.replace(/\[语音条\s*[：:]\s*((?:[^\[\]]|\[[^\[\]]*\])+)\]/g, match => {
+        const token = `\x00VOICE_BLOCK_${voiceBlocks.length}\x00`;
+        voiceBlocks.push(match);
+        return token;
+    });
+    const segments = splitReady.split(/\n\n+/).map(segment => segment.replace(/\x00VOICE_BLOCK_(\d+)\x00/g,
+        (_, index: string) => voiceBlocks[Number(index)] ?? "").trim()).filter(Boolean);
 
     // 4. Parse each segment
     const parts: ParsedMessagePart[] = [];

@@ -17,6 +17,26 @@ import { formatCharacterRelationsForPrompt } from "./character-world-storage";
 import { buildCharacterTimeContext, buildGroupTimeContext, type CharacterTimeContext } from "./character-time";
 import { formatShoppingPaymentRequestHistory } from "./shopping-payment-request";
 import { buildGroupAdminBracketText } from "./group-admin";
+import { ELEVEN_AUDIO_TAG_INSTRUCTION, supportsElevenAudioTags } from "./elevenlabs-audio-tags";
+import { loadBindingConfig, resolveBinding, loadVoiceConfigs } from "./settings-storage";
+
+function appendSpeechPerformanceRule(payload: LLMMessage[], characterIds: string[], appId: string): void {
+    const bindings = loadBindingConfig();
+    const configs = loadVoiceConfigs();
+    const enabled = characterIds.filter(id => {
+        const slot = resolveBinding(bindings, id, appId);
+        const voice = configs.find(config => config.id === slot.voiceConfigId);
+        return voice && supportsElevenAudioTags(voice);
+    });
+    if (!enabled.length) return;
+    payload.push({
+        role: "system",
+        content: ELEVEN_AUDIO_TAG_INSTRUCTION + (characterIds.length > 1
+            ? "\n此演绎协议仅适用于这些角色：" + enabled.map(id => characterIds.indexOf(id) + 1).join("、") + "（按成员列表顺序编号）。其他角色沿用原有语音格式。"
+            : ""),
+        _debugMeta: { marker: "ElevenLabs speech performance" },
+    });
+}
 
 export type LLMMessageRole = "system" | "user" | "assistant" | "tool";
 export type LLMToolCallPayload = { id: string; name: string; args: Record<string, unknown>; thoughtSignature?: string };
@@ -1124,6 +1144,9 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
         }
     }
 
+    if (appId === "chat" && !activeTags.includes("offline")) {
+        appendSpeechPerformanceRule(finalPayload, [character.id], "chat");
+    }
     return finalPayload;
 }
 
@@ -2284,6 +2307,9 @@ export function assembleGroupPromptPayload(input: GroupAssemblerInput): LLMMessa
         }
     }
 
+    if (!input.appTags?.includes("offline")) {
+        appendSpeechPerformanceRule(finalPayload, input.members.map(member => member.character.id), "group_chat");
+    }
     return finalPayload;
 }
 

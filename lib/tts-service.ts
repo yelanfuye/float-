@@ -2,6 +2,7 @@
 
 import type { VoiceApiConfig, ContentAppId } from "./settings-types";
 import { synthesizeElevenSpeech } from "./elevenlabs-service";
+import { supportsElevenAudioTags, stripElevenAudioTags } from "./elevenlabs-audio-tags";
 import { acquireAudioPlayback } from "./audio-playback-activity";
 import { loadVoiceConfigs, loadBindingConfig, resolveBinding } from "./settings-storage";
 
@@ -31,11 +32,19 @@ export function resolveVoiceConfig(characterId: string, appId?: ContentAppId): V
 export async function synthesizeSpeech(
     text: string,
     voiceConfig: VoiceApiConfig,
-    options?: { emotion?: string; signal?: AbortSignal },
+    options?: { emotion?: string; signal?: AbortSignal; characterId?: string; appId?: ContentAppId; context?: string; onPerformanceText?: (text: string) => void },
 ): Promise<Blob | null> {
     if (!text.trim()) return null;
 
     const provider = voiceConfig.provider;
+    if (supportsElevenAudioTags(voiceConfig)) {
+        const { prepareElevenPerformance } = await import("./elevenlabs-performance");
+        const performed = await prepareElevenPerformance(text, options);
+        options?.onPerformanceText?.(performed);
+        return synthesizeElevenSpeech(performed, voiceConfig, options?.signal);
+    }
+    text = stripElevenAudioTags(text);
+    if (!text.trim()) return null;
     if (provider === "ElevenLabs") return synthesizeElevenSpeech(text, voiceConfig, options?.signal);
 
     if (provider === "Minimax") {
