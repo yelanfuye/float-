@@ -13,7 +13,7 @@ import { ContactCardGenerateFlow } from "@/components/chat/contact-card-generate
 import { MediaPreviewOverlay } from "@/components/chat/media-preview-overlay";
 import { findStickerByName } from "@/lib/sticker-data";
 import { splitBilingualText } from "@/lib/bilingual-text";
-import { stripElevenAudioTags } from "@/lib/elevenlabs-audio-tags";
+import { stripElevenAudioTags, hasElevenAudioTags } from "@/lib/elevenlabs-audio-tags";
 import { isInvisibleOrWhitespaceOnly } from "@/lib/rich-message-parser";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
@@ -2323,10 +2323,11 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
     useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
     const text = msg.mediaData?.label || "语音消息";
     const bilingual = splitBilingualText(text);
-    const speechText = bilingual?.original || text;
-    const rawPerformance = msg.mediaData?.speechPerformanceText;
+    const speechText = stripElevenAudioTags(bilingual?.original || text);
+    const rawPerformance = msg.mediaData?.speechPerformanceText || text;
     const performanceOriginal = rawPerformance ? (splitBilingualText(rawPerformance)?.original || rawPerformance) : undefined;
-    const performanceText = performanceOriginal && stripElevenAudioTags(performanceOriginal) === speechText.trim()
+    const performanceText = performanceOriginal && hasElevenAudioTags(performanceOriginal)
+        && stripElevenAudioTags(performanceOriginal) === speechText.trim()
         ? performanceOriginal : undefined;
     const synthesizedFromText = msg.mediaData?.synthesizedFromText;
     const needsResynthesis = msg.role !== "user" && (
@@ -2411,6 +2412,7 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
     });
 
     return (
+        <div>
         <div className="voice-msg-bubble" onClick={handlePlay}
             title={synthError || undefined}
             style={{ minWidth: `${Math.min(60 + duration * 8, 220)}px` }}
@@ -2436,6 +2438,13 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
                 ))}
             </div>
             <span className="voice-msg-dur">{synthFailed ? "合成失败·点击重试" : `${duration}"`}</span>
+        </div>
+        {msg.role === "assistant" && <div className="ts-12" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", marginTop: 6 }}>
+            <div>语音原文（含语气标签）</div>
+            <div>{performanceText || text}</div>
+            {!hasElevenAudioTags(performanceText || text) && <div role="status">未检测到语气标签：此条语音尚未符合输出规则</div>}
+            {synthError && <div role="alert">{synthError}</div>}
+        </div>}
         </div>
     );
 }

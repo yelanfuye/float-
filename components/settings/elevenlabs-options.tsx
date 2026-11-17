@@ -97,7 +97,7 @@ export function ElevenLabsOptions({ config, onChange, onPreview, playing }: {
             <input type="checkbox" checked={supportsElevenAudioTags(config)} onChange={event => onChange({ elevenAudioTags: event.target.checked })} />
             此模型支持语音演绎标签
         </label>
-        <span className="menu-desc">v3 默认启用；其他模型请确认支持后开启。启用后每条新合成语音至少包含一个标签，结合台词和上下文生成。旧消息缺少标签时会调用聊天 API 补充，失败可重试；已有音频继续使用。</span>
+        <span className="menu-desc">此选项只决定合成时是否向模型传递标签：v3 默认开启，其他模型请确认支持后开启。聊天语音条无论是否绑定语音模型，都必须在原文中生成标签，并直接显示以便检查。模型漏写时会调用聊天 API 补齐，可能增加等待时间和用量；已有音频继续使用。</span>
         <span className="menu-desc">口音仅按角色设定或剧情需要使用，实际表现取决于模型与音色。列表刷新不会修改已保存的模型和音色。</span>
     </div>;
 }

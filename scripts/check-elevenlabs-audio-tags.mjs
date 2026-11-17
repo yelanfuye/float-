@@ -65,7 +65,7 @@ const { parseAIResponse } = load("lib/rich-message-parser.ts");
 const parsed = parseAIResponse("[语音条:[curious]你好。\n\n[whispers]请填写[姓名]。]\n\n正常消息", []);
 assert.equal(parsed.parts.length, 2);
 assert.equal(parsed.parts[0].mediaType, "audio");
-assert.equal(parsed.parts[0].mediaData.label, "你好。\n\n请填写[姓名]。");
+assert.equal(parsed.parts[0].mediaData.label, "[curious]你好。\n\n[whispers]请填写[姓名]。");
 assert.equal(parsed.parts[0].mediaData.speechPerformanceText, "[curious]你好。\n\n[whispers]请填写[姓名]。");
 assert.equal(parsed.parts[1].content, "正常消息");
 assert.equal(parseAIResponse("[语音条:旧消息]", []).parts[0].mediaData.label, "旧消息");
@@ -76,4 +76,14 @@ assert.equal(await ensureVoiceTagsInResponse("普通文字", { characterId: "tes
 assert.equal(await ensureVoiceTagsInResponse("[语音条:Hello | 你好]", { characterId: "test" }), "[语音条:[curious]Hello | 你好]");
 const multiline = "[语音条:Hello | 你好\nBye | 再见]";
 assert.equal(await ensureVoiceTagsInResponse(multiline, { characterId: "test" }), "[语音条:[curious]Hello | 你好\nBye | 再见]");
+// 生成规则不依赖 TTS 配置：未绑定、旧模型、显式关闭传递标签时仍须在原文打标。
+const storage = mocks["./settings-storage"];
+for (const voice of [null, { id: "voice", provider: "ElevenLabs", model: "eleven_multilingual_v2" },
+    { id: "voice", provider: "ElevenLabs", model: "eleven_v3", elevenAudioTags: false }]) {
+    storage.loadVoiceConfigs = () => voice ? [voice] : [];
+    storage.resolveBinding = () => ({ apiConfigId: "chat", ...(voice ? { voiceConfigId: "voice" } : {}) });
+    const tagged = await ensureVoiceTagsInResponse("[语音条:检查输出规则。]", { characterId: "test" });
+    assert.equal(tagged, "[语音条:[curious]检查输出规则。]");
+    assert.equal(parseAIResponse(tagged, []).parts[0].mediaData.label, "[curious]检查输出规则。");
+}
 console.log("ElevenLabs audio tag regression checks passed (offline; API and parser dependencies mocked).");

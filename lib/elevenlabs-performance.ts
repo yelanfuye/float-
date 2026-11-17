@@ -1,7 +1,7 @@
 import type { ApiConfig, ContentAppId } from "./settings-types";
 import { buildProviderRequest, parseProviderResponse } from "./llm-provider-adapter";
 import { fetchLlmPayload } from "./llm-http";
-import { hasElevenAudioTags, isElevenAudioTag, ELEVEN_AUDIO_TAG_INSTRUCTION, supportsElevenAudioTags } from "./elevenlabs-audio-tags";
+import { hasElevenAudioTags, isElevenAudioTag, ELEVEN_AUDIO_TAG_INSTRUCTION } from "./elevenlabs-audio-tags";
 import { splitBilingualText } from "./bilingual-text";
 
 /** 在回复交付前补齐语音标签，让保存的原文与合成台词保持一致。 */
@@ -9,10 +9,8 @@ export async function ensureVoiceTagsInResponse(text: string, options: SpeechPer
     const pattern = /\[语音条\s*[：:]\s*((?:[^\[\]]|\[[^\[\]]*\])+)\]/g;
     const matches = [...text.matchAll(pattern)];
     if (!matches.length) return text;
-    const { loadBindingConfig, resolveBinding, loadVoiceConfigs } = await import("./settings-storage");
-    const slot = resolveBinding(loadBindingConfig(), options.characterId, options.appId || "chat");
-    const voice = loadVoiceConfigs().find(item => item.id === slot.voiceConfigId);
-    if (!voice || !supportsElevenAudioTags(voice)) return text;
+    // 无论是否绑定 TTS，都必须遵循语音条输出协议；不能静默放行无标签语音。
+    if (options.signal?.aborted) throw new DOMException("已取消", "AbortError");
     let result = "";
     let cursor = 0;
     for (const match of matches) {

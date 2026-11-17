@@ -13,7 +13,7 @@ import type { ChatMessage } from "./chat-storage";
 import type { StateValue } from "./chat-storage";
 import { parseStateValues, mergeStateValues } from "./state-value-parser";
 import { stripActionShells } from "./action-parser";
-import { stripElevenAudioTags, hasElevenAudioTags } from "./elevenlabs-audio-tags";
+import { hasElevenAudioTags } from "./elevenlabs-audio-tags";
 import { stripTextToolDirectives } from "./text-tool-protocol";
 import {
     formatCustomAppDirectiveSummary,
@@ -257,7 +257,8 @@ const RICH_PATTERNS: {
             content: "",
             mediaType: "audio" as const,
             mediaData: {
-                label: stripElevenAudioTags(m[1]),
+                // 调试验收阶段保留标签原文，不能在解析落库时隐藏。
+                label: m[1].trim(),
                 ...(hasElevenAudioTags(m[1]) ? { speechPerformanceText: m[1].trim() } : {}),
             },
         }),
