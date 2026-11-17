@@ -179,7 +179,16 @@ export type VoiceApiConfig = {
 };
 
 // --- Image Generation ---
-export type ImageGenerationProvider = "openai" | "novelai";
+export type ImageGenerationProvider = "openai" | "novelai" | "gemini";
+
+export type GeminiImageSettings = {
+    apiKey: string;
+    baseUrl: string;
+    model: string;
+    requestMode: "server" | "direct";
+    aspectRatio: string;
+    extraPrompt: string;
+};
 
 export type ImageGenerationRequestMode = "server" | "direct";
 
@@ -243,6 +252,8 @@ export type ImageGenerationSettings = {
     activeOpenAiPresetId?: string;
     // NovelAI 模式配置
     novelai?: NovelAiSettings;
+    // Google Gemini 原生生图，与其他提供方独立保存
+    gemini?: GeminiImageSettings;
     characterReferences: Record<string, {
         assetId: string;
         updatedAt: number;

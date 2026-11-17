@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ProxyAgent, type Dispatcher } from "undici";
 import JSZip from "jszip";
+import { buildGeminiImageRequest, parseGeminiImageResponse } from "@/lib/gemini-image";
 import {
   NOVELAI_DEFAULT_MODEL,
   getNovelAiResolution,
@@ -17,7 +18,8 @@ import {
 export const maxDuration = 120;
 
 type ImageGenerationRequest = {
-  provider?: "openai" | "novelai";
+  provider?: "openai" | "novelai" | "gemini";
+  aspectRatio?: string;
   apiKey?: string;
   baseUrl?: string;
   model?: string;
@@ -292,6 +294,40 @@ async function runNovelAiGeneration(input: ImageGenerationRequest): Promise<{ st
 }
 
 async function runImageGeneration(input: ImageGenerationRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+  if (input.provider === "gemini") {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 115_000);
+    try {
+      for (const key of ["apiKey", "baseUrl", "model", "prompt", "aspectRatio", "referenceImageDataUrl"] as const) {
+        if (input[key] !== undefined && typeof input[key] !== "string") {
+          return { status: 400, body: { error: `生图失败（Google）：${key} 格式无效。` } };
+        }
+      }
+      if (!input.apiKey?.trim()) return { status: 400, body: { error: "生图失败（Google）：缺少 API Key。" } };
+      const request = buildGeminiImageRequest({
+        baseUrl: input.baseUrl || "", model: input.model || "", prompt: input.prompt || "",
+        aspectRatio: input.aspectRatio, referenceImageDataUrl: input.referenceImageDataUrl,
+      });
+      const response = await externalFetch(request.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": input.apiKey.trim() },
+        body: request.body,
+        signal: controller.signal,
+      });
+      const json: unknown = await response.json().catch(() => null);
+      const image = parseGeminiImageResponse(json, response.status);
+      return { status: 200, body: { ...image } };
+    } catch (error) {
+      return {
+        status: controller.signal.aborted ? 504 : 502,
+        body: { error: controller.signal.aborted
+          ? "生图失败（Google）：服务端等待超时，结果未知，请勿连续重复提交。"
+          : error instanceof Error ? error.message : "生图失败（Google）：接口连接异常，请检查网络和配置。" },
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   if (input.provider === "novelai") {
     return runNovelAiGeneration(input);
   }

@@ -5,6 +5,7 @@ import { AlertCircle, Camera, ChevronDown, Image, Info, Plus, RefreshCw, Sparkle
 import type { ImageGenerationSettings as ImageGenerationSettingsType, NovelAiPreset, OpenAiImagePreset } from "@/lib/settings-types";
 import {
     DEFAULT_IMAGE_GENERATION_SETTINGS,
+    DEFAULT_GEMINI_IMAGE_SETTINGS,
     DEFAULT_NOVELAI_PRESET,
     loadImageGenerationSettings,
     saveImageGenerationSettings,
@@ -21,6 +22,8 @@ import {
 import { Alert } from "@/components/ui/feedback";
 import { Input, Select, Textarea, Toggle } from "@/components/ui/form";
 import { ConfirmDialog } from "@/components/ui/modal";
+import { GeneratedImageErrorDialog } from "@/components/chat/generated-image-error-dialog";
+import { GEMINI_IMAGE_ASPECT_RATIOS } from "@/lib/gemini-image";
 import {
     NOVELAI_COMMON_MODELS,
     NOVELAI_NOISE_SCHEDULE_OPTIONS,
@@ -72,6 +75,8 @@ export function ImageGenerationSettings() {
     const [naiModels, setNaiModels] = useState<string[]>(NOVELAI_COMMON_MODELS);
     const [isFetchingNaiModels, setIsFetchingNaiModels] = useState(false);
     const [isTesting, setIsTesting] = useState(false);
+    const [generationError, setGenerationError] = useState<string | null>(null);
+    const geminiSettings = { ...DEFAULT_GEMINI_IMAGE_SETTINGS, ...settings.gemini };
     const [status, setStatus] = useState<Status | null>(null);
     const [naiTokenStatus, setNaiTokenStatus] = useState<Status | null>(null);
     const [testPreviewUrl, setTestPreviewUrl] = useState<string | null>(null);
@@ -297,7 +302,9 @@ export function ImageGenerationSettings() {
             setTestPreviewUrl(URL.createObjectURL(result.blob));
             setStatus({ success: true, message: "测试生图成功。" });
         } catch (err) {
-            setStatus({ success: false, message: err instanceof Error ? err.message : String(err) });
+            const message = err instanceof Error ? err.message : String(err);
+            setGenerationError(message);
+            setStatus({ success: false, message });
         } finally {
             setIsTesting(false);
         }
@@ -352,28 +359,69 @@ export function ImageGenerationSettings() {
                     <Select
                         value={settings.provider || "openai"}
                         onChange={(event) => updateSettings({
-                            provider: event.target.value as "openai" | "novelai",
+                            provider: event.target.value as ImageGenerationSettingsType["provider"],
                         })}
                     >
                         <option value="openai">OpenAI 兼容 (通用模型 / DALL-E / Flux / SD 中转等)</option>
                         <option value="novelai">NovelAI 原生接口 (官方 API)</option>
+                        <option value="gemini">Google Gemini 原生生图 (Nano Banana)</option>
                     </Select>
                 </div>
 
                 <div className="flex flex-col gap-1">
                     <label className="menu-desc ml-1">请求方式</label>
                     <Select
-                        value={settings.requestMode}
-                        onChange={(event) => updateSettings({
-                            requestMode: event.target.value as ImageGenerationSettingsType["requestMode"],
-                        })}
+                        value={settings.provider === "gemini" ? geminiSettings.requestMode : settings.requestMode}
+                        onChange={(event) => {
+                            const requestMode = event.target.value as ImageGenerationSettingsType["requestMode"];
+                            if (settings.provider === "gemini") updateSettings({ gemini: { ...geminiSettings, requestMode } });
+                            else if (!settings.provider || settings.provider === "openai") updateOpenAiPreset({ requestMode });
+                            else updateSettings({ requestMode });
+                        }}
                     >
                         <option value="server">服务端转发（推荐，可避免跨域报错）</option>
                         <option value="direct">浏览器直连（需接口允许 CORS 跨域）</option>
                     </Select>
                 </div>
 
-                {settings.provider === "novelai" ? (
+                {settings.provider === "gemini" ? (
+                    <>
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">Google API Key</label>
+                            <Input type="password" autoComplete="off" value={geminiSettings.apiKey}
+                                onChange={(event) => updateSettings({ gemini: { ...geminiSettings, apiKey: event.target.value } })}
+                                placeholder="填写 Google AI Studio API Key" />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">接口地址（Gemini 原生协议）</label>
+                            <Input type="url" value={geminiSettings.baseUrl}
+                                onChange={(event) => updateSettings({ gemini: { ...geminiSettings, baseUrl: event.target.value } })}
+                                placeholder="https://generativelanguage.googleapis.com/v1beta" />
+                            <span className="menu-desc ml-1">官方接口可保留默认地址。使用中转时，需确认支持 Gemini 原生 generateContent 协议。</span>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">生图模型 ID</label>
+                            <Input type="text" value={geminiSettings.model}
+                                onChange={(event) => updateSettings({ gemini: { ...geminiSettings, model: event.target.value } })}
+                                placeholder="gemini-2.5-flash-image" />
+                            <span className="menu-desc ml-1">默认填写 gemini-2.5-flash-image，可改为账户可用的其他 Gemini 生图型号。普通文本模型不能代替生图模型。</span>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">画面比例</label>
+                            <Select value={geminiSettings.aspectRatio}
+                                onChange={(event) => updateSettings({ gemini: { ...geminiSettings, aspectRatio: event.target.value } })}>
+                                {GEMINI_IMAGE_ASPECT_RATIOS.map(ratio => <option key={ratio} value={ratio}>{ratio === "auto" ? "自动（使用模型默认值）" : ratio}</option>)}
+                            </Select>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                            <label className="menu-desc ml-1">补充提示词</label>
+                            <Textarea value={geminiSettings.extraPrompt} rows={3}
+                                onChange={(event) => updateSettings({ gemini: { ...geminiSettings, extraPrompt: event.target.value } })}
+                                placeholder="可填写画风、构图等要求" />
+                            <span className="menu-desc ml-1">Google 配置独立保存；角色参考图会在启用参考图时一并发送。</span>
+                        </div>
+                    </>
+                ) : settings.provider === "novelai" ? (
                     /* --- NovelAI 配置面板 --- */
                     <>
                         <div className="flex flex-col gap-1">
@@ -927,6 +975,10 @@ export function ImageGenerationSettings() {
                         })}
                     </div>
                 </div>
+            )}
+
+            {generationError && (
+                <GeneratedImageErrorDialog message={generationError} onClose={() => setGenerationError(null)} />
             )}
 
             {pendingDeleteOpenAiPresetId && (

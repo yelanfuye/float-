@@ -683,6 +683,15 @@ export const DEFAULT_NOVELAI_PRESET: import("./settings-types").NovelAiPreset = 
     smeaDyn: false,
 };
 
+export const DEFAULT_GEMINI_IMAGE_SETTINGS: import("./settings-types").GeminiImageSettings = {
+    apiKey: "",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    model: "gemini-2.5-flash-image",
+    requestMode: "server",
+    aspectRatio: "auto",
+    extraPrompt: "",
+};
+
 export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
     enabled: false,
     provider: "openai",
@@ -693,6 +702,7 @@ export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
     size: "1024x1024",
     quality: "auto",
     extraPrompt: "",
+    gemini: { ...DEFAULT_GEMINI_IMAGE_SETTINGS },
     novelai: {
         apiKey: "",
         activePresetId: DEFAULT_NOVELAI_PRESET.id,
@@ -745,7 +755,16 @@ function normalizeImageGenerationSettings(settings: Partial<ImageGenerationSetti
     const refs = settings?.characterReferences && typeof settings.characterReferences === "object"
         ? settings.characterReferences
         : {};
-    const provider = settings?.provider === "novelai" ? "novelai" : "openai";
+    const provider = settings?.provider === "gemini" ? "gemini" : settings?.provider === "novelai" ? "novelai" : "openai";
+    const rawGemini = settings?.gemini;
+    const gemini: import("./settings-types").GeminiImageSettings = {
+        apiKey: typeof rawGemini?.apiKey === "string" ? rawGemini.apiKey : "",
+        baseUrl: typeof rawGemini?.baseUrl === "string" ? rawGemini.baseUrl : DEFAULT_GEMINI_IMAGE_SETTINGS.baseUrl,
+        model: typeof rawGemini?.model === "string" ? rawGemini.model : DEFAULT_GEMINI_IMAGE_SETTINGS.model,
+        requestMode: rawGemini?.requestMode === "direct" ? "direct" : "server",
+        aspectRatio: typeof rawGemini?.aspectRatio === "string" ? rawGemini.aspectRatio : "auto",
+        extraPrompt: typeof rawGemini?.extraPrompt === "string" ? rawGemini.extraPrompt : "",
+    };
     const requestMode = settings?.requestMode === "server" || settings?.requestMode === "direct"
         ? settings.requestMode
         : DEFAULT_IMAGE_GENERATION_SETTINGS.requestMode;
@@ -799,7 +818,8 @@ function normalizeImageGenerationSettings(settings: Partial<ImageGenerationSetti
         ...DEFAULT_IMAGE_GENERATION_SETTINGS,
         ...(settings || {}),
         provider,
-        requestMode: activeOpenAiPreset.requestMode,
+        requestMode: provider === "openai" ? activeOpenAiPreset.requestMode : requestMode,
+        gemini,
         apiKey: activeOpenAiPreset.apiKey,
         baseUrl: activeOpenAiPreset.baseUrl,
         model: activeOpenAiPreset.model,

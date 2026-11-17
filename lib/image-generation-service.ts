@@ -1,6 +1,7 @@
 import type { ImageGenerationSettings, NovelAiPreset } from "./settings-types";
 import { loadImageGenerationSettings, DEFAULT_NOVELAI_PRESET } from "./settings-storage";
 import JSZip from "jszip";
+import { buildGeminiImageRequest, parseGeminiImageResponse } from "./gemini-image";
 import { getChatImageFromIndexedDB } from "./chat-asset-storage";
 import { storeMediaBlob } from "./media-cache-storage";
 import { throwIfAborted } from "./abort-utils";
@@ -443,9 +444,11 @@ async function generateImageViaServer(params: {
       headers: { "Content-Type": "application/json", "x-stream-heartbeat": "1" },
       signal: controller.signal,
       body: JSON.stringify({
+        provider: settings.provider,
         apiKey: settings.apiKey,
         baseUrl: settings.baseUrl,
         model: settings.model,
+        aspectRatio: settings.gemini?.aspectRatio,
         prompt,
         size: settings.size,
         quality: settings.quality,
@@ -736,6 +739,59 @@ export async function generateImageFromConfiguredApi(params: {
 
   const description = params.description.trim();
   if (!description) return null;
+
+  // Google 原生协议：复用参考图、媒体存储与服务端心跳响应。
+  if (settings.provider === "gemini") {
+    const config = settings.gemini;
+    if (!config?.apiKey.trim() || !config.baseUrl.trim() || !config.model.trim()) {
+      throw new Error("生图失败（Google）：请先填写 API Key、接口地址和生图模型。");
+    }
+    const reference = params.characterId ? settings.characterReferences[params.characterId] : undefined;
+    const rawReference = params.useReferenceImage && reference?.assetId
+      ? await getChatImageFromIndexedDB(reference.assetId) : null;
+    throwIfAborted(params.signal);
+    if (params.useReferenceImage && !rawReference) throw new Error("生图失败（Google）：未找到角色参考图，请上传参考图或关闭参考图选项。");
+    const referenceImageDataUrl = rawReference ? await normalizeReferenceImageForEdit(rawReference) : null;
+    const prompt = mergePrompt(description, config.extraPrompt);
+    const request = buildGeminiImageRequest({ ...config, prompt, referenceImageDataUrl });
+    let data: ImageGenerationApiResponse;
+    if (config.requestMode === "direct") {
+      const controller = new AbortController();
+      const onAbort = () => controller.abort();
+      params.signal?.addEventListener("abort", onAbort, { once: true });
+      const timer = setTimeout(() => controller.abort(), 180_000);
+      try {
+        throwIfAborted(params.signal);
+        const response = await fetch(request.url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": config.apiKey.trim() },
+          body: request.body,
+          signal: controller.signal,
+        });
+        const json: unknown = await response.json().catch(() => null);
+        data = parseGeminiImageResponse(json, response.status);
+      } catch (error) {
+        throwIfAborted(params.signal);
+        if (controller.signal.aborted) throw new Error("生图失败（Google）：请求超过 180 秒，结果未知，请勿连续重复提交。");
+        if (error instanceof TypeError) throw new Error("生图失败（Google）：浏览器无法连接接口，请检查网络，或切换为服务端转发。");
+        throw error;
+      } finally {
+        clearTimeout(timer);
+        params.signal?.removeEventListener("abort", onAbort);
+      }
+    } else {
+      data = await generateImageViaServer({
+        settings: { ...settings, apiKey: config.apiKey, baseUrl: config.baseUrl, model: config.model },
+        prompt, referenceImageDataUrl, signal: params.signal,
+      });
+    }
+    throwIfAborted(params.signal);
+    const mimeType = data.mimeType || "image/png";
+    const blob = base64ToBlob(data.b64, mimeType);
+    const mediaRef = await storeMediaBlob(blob, mimeType, "image");
+    throwIfAborted(params.signal);
+    return { mediaRef, dataUrl: `data:${mimeType};base64,${data.b64}`, blob, mimeType, prompt, usedReferenceImage: Boolean(referenceImageDataUrl) };
+  }
 
   // NovelAI 模式
   if (settings.provider === "novelai") {
