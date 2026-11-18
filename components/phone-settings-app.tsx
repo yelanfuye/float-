@@ -1,12 +1,17 @@
 "use client";
 
-import { useState, useEffect, useLayoutEffect, useCallback, useRef, createContext, type CSSProperties, type ReactNode } from "react";
+import { Component, useState, useEffect, useLayoutEffect, useCallback, useRef, createContext, type CSSProperties, type ReactNode } from "react";
 import { Activity, Check, ChevronRight, Clock, Database, FileText, Fingerprint, Globe, HardDrive, Image, Info, KeyRound, Laptop, Layers, Link2, Loader2, LogOut, MessageSquare, Mic, SlidersHorizontal, UserCircle, Wrench, X, CloudUpload } from "lucide-react";
 import { ConfirmDialog } from "./ui/modal";
 import { useAccount } from "@/lib/account-context";
 import { isSelfHostedModeEnabled } from "@/lib/self-hosting";
 import { changeAccountPassword } from "@/lib/account-client";
+import dynamic from "next/dynamic";
 import { ApiSettings } from "./settings/api-settings";
+const ApiManager = dynamic(() => import("./settings/api-manager"), {
+    ssr: false,
+    loading: () => <p role="status">正在加载 API 管理；原入口仍可从设置首页打开。</p>,
+});
 import { VoiceSettings } from "./settings/voice-settings";
 import { ImageGenerationSettings } from "./settings/image-generation-settings";
 import { PresetManager } from "./settings/preset-manager";
@@ -36,6 +41,14 @@ export const SettingsContext = createContext<{
     setSubpageRightAction: (page: string, action: ReactNode | null) => void;
 }>({ setSubpageTitle: () => { }, setOverrideBack: () => { }, setSubpageRightAction: () => { } });
 
+class ApiManagerBoundary extends Component<{ children: ReactNode; onLegacy: () => void }, { failed: boolean }> {
+    state = { failed: false };
+    static getDerivedStateFromError() { return { failed: true }; }
+    render() {
+        return this.state.failed ? <div role="alert"><p>新版 API 管理未能打开。</p><button className="ui-btn" onClick={this.props.onLegacy}>打开旧版 API 设置</button></div> : this.props.children;
+    }
+}
+
 type SettingsPageProps = {
     onClose: () => void;
     onNotice: (msg: string) => void;
@@ -43,6 +56,7 @@ type SettingsPageProps = {
 
 type SubPage =
     | "main"
+    | "apiManager"
     | "api"
     | "voice"
     | "imageGeneration"
@@ -60,6 +74,7 @@ type SubPage =
     | "about";
 
 const SETTINGS_MENU = [
+    { id: "apiManager", icon: HardDrive, label: "API 管理（新版）", desc: "大模型、语音、生图与自定义标签；旧入口保留", iconColor: BINDING_ACCENTS.api, glass: "api" },
     { id: "api", icon: HardDrive, label: "API 设置", desc: "大模型接口", iconColor: BINDING_ACCENTS.api , glass: "api" },
     { id: "voice", icon: Mic, label: "语音 API", desc: "语音合成", iconColor: BINDING_ACCENTS.voice , glass: "voice" },
     { id: "imageGeneration", icon: Image, label: "图像生成 API", desc: "模型、参考图与提示词", iconColor: CONTENT_APP_ACCENTS.moments , glass: "image-generation" },
@@ -298,6 +313,8 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
 
     const renderSubPage = () => {
         switch (currentPage) {
+            case "apiManager":
+                return <ApiManagerBoundary onLegacy={() => setCurrentPage("api")}><ApiManager onLegacy={page => { setSubpageTitle(null); setOverrideBack(null); setCurrentPage(page); }} /></ApiManagerBoundary>;
             case "api":
                 return <ApiSettings />;
             case "voice":
@@ -394,8 +411,9 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                                 <ChevronRight size={18} className="settings-account-chevron" />
                             </button>
                         )}
+                        <FeaturedCard item={{ ...makeCardItem(SETTINGS_MENU.find(item => item.id === "apiManager")!), desc: "大模型、语音、生图与自定义标签" }} />
                         <CardGrid
-                            label="API Config"
+                            label="API Config · 旧版入口保留"
                             labelClassName="settings-menu-section-title"
                             items={SETTINGS_MENU.filter(item => ["api", "voice"].includes(item.id)).map(makeCardItem)}
                         />

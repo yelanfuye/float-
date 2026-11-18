@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useContext } from "react";
+import { useState, useEffect, useCallback, useContext, type ReactNode } from "react";
 import { Plus, RefreshCw, Rss, AlertCircle, FileEdit, Trash2, X, Check } from "lucide-react";
 import { SettingsContext } from "../phone-settings-app";
 import type { ApiConfig } from "@/lib/settings-types";
@@ -32,7 +32,9 @@ function getNativeToolProtocolLabel(config: ApiConfig): string {
     return "OpenAI-compatible";
 }
 
-export function ApiSettings() {
+export type ApiSettingsListRenderer = (configs: ApiConfig[], actions: { add: () => void; edit: (id: string) => void; remove: (id: string) => void }) => ReactNode;
+
+export function ApiSettings({ renderList }: { renderList?: ApiSettingsListRenderer } = {}) {
     const { setSubpageRightAction } = useContext(SettingsContext);
     const [configs, setConfigs] = useState<ApiConfig[]>([]);
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -225,7 +227,7 @@ export function ApiSettings() {
                 <button type="button" className="ui-link-btn ml-auto" onClick={() => setShowCallMonitor(true)}>查看调用记录</button>
             </div>
 
-            {configs.length === 0 ? (
+            {renderList ? renderList(configs, { add: addConfig, edit: setEditingId, remove: setConfirmDeleteId }) : configs.length === 0 ? (
                 <div className="ui-empty">
                     <div className="ui-icon-circle">
                         <AlertCircle size={24} />

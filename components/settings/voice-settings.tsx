@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useContext } from "react";
+import { useState, useEffect, useRef, useCallback, useContext, type ReactNode } from "react";
 import { Plus, Play, Pause, AlertCircle, RefreshCw, FileEdit, Trash2, X, Check, Upload, List } from "lucide-react";
 import { SettingsContext } from "../phone-settings-app";
 import type { VoiceApiConfig } from "@/lib/settings-types";
@@ -230,7 +230,9 @@ function providerSelectValue(config: VoiceApiConfig): string {
     return config.baseUrl === GLOBAL_MINIMAX_BASE_URL ? "MinimaxGlobal" : "MinimaxCN";
 }
 
-export function VoiceSettings() {
+export type VoiceSettingsListRenderer = (configs: VoiceApiConfig[], actions: { add: () => void; edit: (id: string) => void; remove: (id: string) => void }) => ReactNode;
+
+export function VoiceSettings({ renderList }: { renderList?: VoiceSettingsListRenderer } = {}) {
     const { setSubpageRightAction } = useContext(SettingsContext);
     const [configs, setConfigs] = useState<VoiceApiConfig[]>([]);
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -606,7 +608,7 @@ export function VoiceSettings() {
                 <h2 className="m-0 mx-2 ts-28 font-bold italic leading-none text-black">Voice API</h2>
             </div>
 
-            {configs.length === 0 ? (
+            {renderList ? renderList(configs, { add: addConfig, edit: setEditingId, remove: setConfirmDeleteId }) : configs.length === 0 ? (
                 <div className="ui-empty">
                     <div className="ui-icon-circle">
                         <Play size={24} />
